@@ -1,0 +1,1 @@
+#define SMARTCORE_VER "vDEV"
