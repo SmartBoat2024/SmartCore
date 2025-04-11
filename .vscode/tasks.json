@@ -4,8 +4,8 @@
       {
         "label": "📦 Create New SmartModule",
         "type": "shell",
-        "command": "node",
-        "args": ["scripts/create_module.js", "${input:moduleName}"],
+        "command": "cmd",
+        "args": ["/c", "node scripts/create_module.js ${input:moduleName}"],
         "problemMatcher": [],
         "group": "build"
       }

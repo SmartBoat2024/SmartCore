@@ -2,9 +2,9 @@
 #include <Arduino.h>
 #include "SmartCore_config.h" 
 
-// ========================
+// ===========================
 // 2. Firmware and Hardware Details
-// ========================
+// ===========================
 #ifndef FW_VER
 #define FW_VER "vDEV"  // Default firmware version, can be overwritten in main.cpp
 #endif
