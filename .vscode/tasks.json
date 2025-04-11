@@ -1,0 +1,21 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "📦 Create New SmartModule",
+        "type": "shell",
+        "command": "node",
+        "args": ["scripts/create_module.js", "${input:moduleName}"],
+        "problemMatcher": [],
+        "group": "build"
+      }
+    ],
+    "inputs": [
+      {
+        "id": "moduleName",
+        "type": "promptString",
+        "description": "Enter the new module folder name",
+        "default": "SmartModule_X"
+      }
+    ]
+  }

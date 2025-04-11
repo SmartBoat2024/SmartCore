@@ -1,6 +1,5 @@
-# SmartCore/scripts/version_generator.py
-
 import subprocess
+from pathlib import Path
 
 def get_git_tag():
     try:
@@ -8,10 +7,12 @@ def get_git_tag():
     except:
         return "vDEV"
 
-tag = get_git_tag()
-header_path = "lib/SmartCore/src/SmartCoreVersion.h"
+def write_version_header(version):
+    header_path = Path(__file__).resolve().parent.parent / "src" / "SmartCoreVersion.h"
+    with open(header_path, "w") as f:
+        f.write(f'#pragma once\n\n#define SMARTCORE_VERSION "{version}"\n')
 
-with open(header_path, "w") as f:
-    f.write(f'#define SMARTCORE_VER "{tag}"\n')
-
-print(f"[SmartCore] ✅ Created SmartCoreVersion.h with version: {tag}")
+if __name__ == "__main__":
+    version = get_git_tag()
+    print(f"[SmartCore] ✅ Detected version: {version}")
+    write_version_header(version)
