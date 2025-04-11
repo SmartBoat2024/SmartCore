@@ -2,8 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
 
-const templateFiles = ["platformio.ini", "src", "include", "scripts"]; // main.cpp is now in src
-
+const templateFiles = ["platformio.ini", "src", "include", "scripts"];
 const moduleName = process.argv[2] || "NewSmartModule";
 const targetDir = path.join(__dirname, "..", "..", moduleName);
 
@@ -21,22 +20,29 @@ templateFiles.forEach(file => {
   }
 });
 
-// 🔁 Replace dev-only line in platformio.ini
+// Update platformio.ini
 const pioIniPath = path.join(targetDir, "platformio.ini");
 if (fs.existsSync(pioIniPath)) {
   let content = fs.readFileSync(pioIniPath, "utf8");
 
-  content = content.replace(
-    /^\s*lib_extra_dirs\s*=.*$/m,
-    'lib_deps = https://github.com/SmartBoat2024/SmartCore'
-  );
+  // Remove lib_extra_dirs entirely
+  content = content.replace(/^\s*lib_extra_dirs\s*=.*$/gm, "");
+
+  // Inject SmartCore lib_deps if not already included
+  const smartCoreLib = "https://github.com/SmartBoat2024/SmartCore";
+  if (!content.includes(smartCoreLib)) {
+    content = content.replace(
+      /\[env:.*?\]/,
+      match => `${match}\nlib_deps = ${smartCoreLib}`
+    );
+  }
 
   fs.writeFileSync(pioIniPath, content);
-  console.log("🔄 Swapped lib_extra_dirs with SmartCore GitHub lib_deps");
+  console.log("🔄 Cleaned lib_extra_dirs and added SmartCore to lib_deps");
 }
 
 console.log(`✅ Module ${moduleName} created at ${targetDir}`);
 
-// Open in VS Code
+// Open the new module in VS Code
 exec(`code "${targetDir}"`);
 
