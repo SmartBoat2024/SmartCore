@@ -1,25 +1,26 @@
 {
-    "name": "SmartCore",
-    "version": "0.0.0",
-    "description": "Core logic and shared functions for SmartBoat modules.",
-    "keywords": ["smartboat", "iot", "esp32", "core"],
-    "repository": {
-      "type": "git",
-      "url": "https://github.com/YOUR_USERNAME/SmartCore"
-    },
-    "authors": [
-      {
-        "name": "Cris",
-        "email": "chris@mysmartboat.com",
-        "url": "https://mysmartboat.com"
-      }
-    ],
-    "frameworks": ["arduino"],
-    "platforms": ["espressif32"],
-    "build": {
-      "flags": ["-DSMARTCORE_ENABLED"]
-    },
-    "export": {
-      "include": ["src", "include", "SmartCoreVersion.h", "library.json"]
+  "name": "SmartCore",
+  "version": "0.0.0",
+  "description": "Core logic and shared functions for SmartBoat modules.",
+  "keywords": ["smartboat", "iot", "esp32", "core"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SmartBoat2024/SmartCore"
+  },
+  "authors": [
+    {
+      "name": "Cris",
+      "email": "chris@mysmartboat.com",
+      "url": "https://mysmartboat.com"
     }
+  ],
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"],
+  "build": {
+    "flags": ["-DSMARTCORE_ENABLED"],
+    "srcFilter": "+<src/*.cpp>"  
+  },
+  "export": {
+    "include": ["src", "include", "SmartCoreVersion.h", "library.json"]
   }
+}
