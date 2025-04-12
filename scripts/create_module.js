@@ -37,7 +37,7 @@ if (fs.existsSync(pioIniPath)) {
       /lib_deps\s*=\s*(.*)/,
       (match, existing) => {
         if (existing.includes(smartCoreRepo)) return match;
-        return `lib_deps = ${smartCoreRepo}\n    ${existing.trim()}`;
+        return `lib_deps = ${smartCoreRepo}\n    ${existing.trim().replace(/^/gm, '    ')}`;
       }
     );
   } else {

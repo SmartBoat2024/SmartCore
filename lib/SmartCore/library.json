@@ -16,11 +16,7 @@
   ],
   "frameworks": ["arduino"],
   "platforms": ["espressif32"],
-  "build": {
-    "flags": ["-DSMARTCORE_ENABLED"],
-    "srcFilter": "+<src/>" 
-  },
   "export": {
-    "include": ["src", "include", "SmartCoreVersion.h", "library.json"]
+    "include": ["src", "SmartCoreVersion.h", "library.json"]
   }
 }

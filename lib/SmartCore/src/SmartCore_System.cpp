@@ -1,3 +1,4 @@
+#include "SmartCore_config.h"
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <LittleFS.h>
