@@ -8,169 +8,205 @@
 
 namespace SmartCore_EEPROM {
 
-static SmartCoreSettings _settings; 
+    static SmartCoreSettings _settings;
 
-void init(const SmartCoreSettings& settings) {
-    _settings = settings;
-}
-    
-
-int readIntFromEEPROM(int address) {
-    return (EEPROM.read(address) << 8) + EEPROM.read(address + 1);
-}
-
-void writeIntToEEPROM(int number, int address) {
-    EEPROM.write(address, number >> 8);
-    EEPROM.write(address + 1, number & 0xFF);
-    EEPROM.commit();
-}
-
-// --- Serial Number
-void writeSerialNumberToEEPROM() {
-    size_t length = strlen(serialNumber); 
-    if (length >= 39) length = 38;
-    for (size_t i = 0; i < length; ++i) {
-        EEPROM.write(SN_ADDR + i, serialNumber[i]);
+    void init(const SmartCoreSettings& settings) {
+        _settings = settings;
     }
-    EEPROM.write(SN_ADDR + length, '\0');
-    EEPROM.commit();
-}
 
-char* readSerialNumberFromEEPROM() {
-    static char result[40];
-    for (int i = 0; i < 40; ++i) {
-        result[i] = EEPROM.read(SN_ADDR + i);
+    // --- Integer Read/Write ---
+    int readIntFromEEPROM(int address) {
+        return (EEPROM.read(address) << 8) + EEPROM.read(address + 1);
     }
-    result[39] = '\0';
-    return result;
-}
 
-// --- Webname
-void writeCustomWebnameToEEPROM() {
-    for (int i = 0; i < sizeof(webnamechar); ++i) {
-        EEPROM.write(WEBNAME_ADDR + i, (i < strlen(webnamechar)) ? webnamechar[i] : '\0');
-    }
-    EEPROM.commit();
-}
-
-char* readCustomWebnameFromEEPROM() {
-    static char result[40];
-    for (int i = 0; i < sizeof(result) - 1; ++i) {
-        result[i] = EEPROM.read(WEBNAME_ADDR + i);
-    }
-    result[sizeof(result) - 1] = '\0';
-    return result;
-}
-
-// --- Module Name
-void writeModuleNameToEEPROM(const char* moduleName, size_t maxLen) {
-    size_t i = 0;
-    for (; i < maxLen - 1 && moduleName[i] != '\0'; ++i) {
-        EEPROM.write(MOD_NAME_ADDR + i, moduleName[i]);
-    }
-    EEPROM.write(MOD_NAME_ADDR + i, '\0');
-    for (++i; i < maxLen; ++i) {
-        EEPROM.write(MOD_NAME_ADDR + i, '\0');
-    }
-    EEPROM.commit();
-}
-
-void readModuleNameFromEEPROM(char* moduleName, size_t maxLen) {
-    size_t i = 0;
-    for (; i < maxLen - 1; ++i) {
-        moduleName[i] = EEPROM.read(MOD_NAME_ADDR + i);
-        if (moduleName[i] == '\0') break;
-    }
-    moduleName[maxLen - 1] = '\0';
-    Serial.printf("Module Name: %s\n", moduleName);
-}
-
-// --- Flags & Booleans
-void writeSmartBoatToEEPROM(bool smartBoat) {
-    EEPROM.write(SB_BOOL_ADDR, smartBoat ? 1 : 0);
-    EEPROM.commit();
-}
-
-bool readSmartBoatFromEEPROM() {
-    return EEPROM.read(SB_BOOL_ADDR) == 1;
-}
-
-bool readFirstWiFiConnectFlag() {
-    return EEPROM.read(EEPROM_ADDR_FLAG) == 1;
-}
-
-void writeFirstWiFiConnectFlag(bool flag) {
-    EEPROM.write(EEPROM_ADDR_FLAG, flag ? 1 : 0);
-    EEPROM.commit();
-}
-
-bool readResetConfigFlag() {
-    return EEPROM.read(RESET_ADDR_FLAG) == 1;
-}
-
-void writeResetConfigFlag(bool flag) {
-    EEPROM.write(RESET_ADDR_FLAG, flag ? 1 : 0);
-    EEPROM.commit();
-}
-
-void writeStandaloneModeToEEPROM(bool mode) {
-    EEPROM.write(STANDALONE_MODE_ADDR, mode ? 1 : 0);
-    EEPROM.commit();
-}
-
-bool readStandaloneModeFromEEPROM() {
-    return EEPROM.read(STANDALONE_MODE_ADDR) == 1;
-}
-
-// --- String Helper
-String readStringFromEEPROM(int address, int maxLength) {
-    char buffer[maxLength + 1];
-    for (int i = 0; i < maxLength; ++i) {
-        buffer[i] = EEPROM.read(address + i);
-        if (buffer[i] == '\0') break;
-    }
-    buffer[maxLength] = '\0';
-    return String(buffer);
-}
-
-void writeStringToEEPROM(int address, const String& data) {
-    int length = data.length();
-    for (int i = 0; i < length; ++i) {
-        EEPROM.write(address + i, data[i]);
-    }
-    EEPROM.write(address + length, '\0');
-    EEPROM.commit();
-}
-
-void writeBoolToEEPROM(int address, bool value) {
-    EEPROM.write(address, value ? 1 : 0);
-    EEPROM.commit();
-}
-
-bool readBoolFromEEPROM(int address) {
-    return EEPROM.read(address) == 1;
-}
-
-void updateEEPROMIfNeeded(int address, byte value) {
-    if (EEPROM.read(address) != value) {
-        EEPROM.write(address, value);
+    void writeIntToEEPROM(int number, int address) {
+        EEPROM.write(address, number >> 8);
+        EEPROM.write(address + 1, number & 0xFF);
         EEPROM.commit();
     }
-}
 
-String boolToString(bool value) {
-    return value ? "true" : "false";
-}
+    // --- Serial Number (char array) ---
+    void writeSerialNumberToEEPROM() {
+        size_t length = strlen(serialNumber);
+        if (length >= EEPROM_STR_LEN) length = EEPROM_STR_LEN;
 
-// --- Upgrade Flag
-void saveUpgradeFlag(bool value) {
-    EEPROM.write(UPGRADE_FLAG_ADDR, value ? 1 : 0);
-    EEPROM.commit();
-}
+        for (size_t i = 0; i < length; ++i) {
+            EEPROM.write(SN_ADDR + i, serialNumber[i]);
+        }
 
-bool loadUpgradeFlag() {
-    return EEPROM.read(UPGRADE_FLAG_ADDR) == 1;
-}
+        EEPROM.write(SN_ADDR + length, '\0');
+
+        for (size_t i = length + 1; i < EEPROM_STR_TOTAL; ++i) {
+            EEPROM.write(SN_ADDR + i, '\0');
+        }
+
+        EEPROM.commit();
+    }
+
+    char* readSerialNumberFromEEPROM() {
+        static char result[EEPROM_STR_TOTAL];
+        for (int i = 0; i < EEPROM_STR_TOTAL - 1; ++i) {
+            result[i] = EEPROM.read(SN_ADDR + i);
+            if (result[i] == '\0') break;
+        }
+        result[EEPROM_STR_TOTAL - 1] = '\0';
+        return result;
+    }
+
+    // --- Webname (char array) ---
+    void writeCustomWebnameToEEPROM() {
+        size_t length = strlen(webnamechar);
+        if (length >= EEPROM_STR_LEN) length = EEPROM_STR_LEN;
+
+        for (size_t i = 0; i < length; ++i) {
+            EEPROM.write(WEBNAME_ADDR + i, webnamechar[i]);
+        }
+
+        EEPROM.write(WEBNAME_ADDR + length, '\0');
+
+        for (size_t i = length + 1; i < EEPROM_STR_TOTAL; ++i) {
+            EEPROM.write(WEBNAME_ADDR + i, '\0');
+        }
+
+        EEPROM.commit();
+    }
+
+    char* readCustomWebnameFromEEPROM() {
+        static char result[EEPROM_STR_TOTAL];
+        for (int i = 0; i < EEPROM_STR_TOTAL - 1; ++i) {
+            result[i] = EEPROM.read(WEBNAME_ADDR + i);
+            if (result[i] == '\0') break;
+        }
+        result[EEPROM_STR_TOTAL - 1] = '\0';
+        return result;
+    }
+
+    // --- String Helper (for String-based variables) ---
+    String readStringFromEEPROM(int address, int maxLength) {
+        char buffer[maxLength + 1];
+        for (int i = 0; i < maxLength; ++i) {
+            buffer[i] = EEPROM.read(address + i);
+            if (buffer[i] == '\0') break;
+        }
+        buffer[maxLength] = '\0';
+        return String(buffer);
+    }
+
+    void writeStringToEEPROM(int address, String data) {
+        int length = data.length();
+        if (length > EEPROM_STR_LEN) length = EEPROM_STR_LEN;
+
+        for (int i = 0; i < length; ++i) {
+            EEPROM.write(address + i, data[i]);
+        }
+
+        EEPROM.write(address + length, '\0');
+
+        for (int i = length + 1; i < EEPROM_STR_TOTAL; ++i) {
+            EEPROM.write(address + i, '\0');
+        }
+
+        EEPROM.commit();
+    }
+
+    // --- Module Name (String) ---
+    void writeModuleNameToEEPROM(const String& moduleName) {
+        writeStringToEEPROM(MOD_NAME_ADDR, moduleName);
+    }
+
+    String readModuleNameFromEEPROM() {
+        return readStringFromEEPROM(MOD_NAME_ADDR, EEPROM_STR_TOTAL);
+    }
+
+    // --- Location (String) ---
+    void writeLocationToEEPROM(const String& location) {
+        writeStringToEEPROM(MOD_LOCATION_ADDR, location);
+    }
+
+    String readLocationFromEEPROM() {
+        return readStringFromEEPROM(MOD_LOCATION_ADDR, EEPROM_STR_TOTAL);
+    }
+
+    // --- Boolean Helpers ---
+    void writeBoolToEEPROM(int address, bool value) {
+        EEPROM.write(address, value ? 1 : 0);
+        EEPROM.commit();
+    }
+
+    bool readBoolFromEEPROM(int address) {
+        return EEPROM.read(address) == 1;
+    }
+
+    String boolToString(bool value) {
+        return value ? "true" : "false";
+    }
+
+    // --- Flags & Modes ---
+    void writeSmartBoatToEEPROM(bool smartBoat) {
+        writeBoolToEEPROM(SB_BOOL_ADDR, smartBoat);
+    }
+
+    bool readSmartBoatFromEEPROM() {
+        return readBoolFromEEPROM(SB_BOOL_ADDR);
+    }
+
+    void writeFirstWiFiConnectFlag(bool flag) {
+        writeBoolToEEPROM(EEPROM_ADDR_FLAG, flag);
+    }
+
+    bool readFirstWiFiConnectFlag() {
+        return readBoolFromEEPROM(EEPROM_ADDR_FLAG);
+    }
+
+    void writeSerialNumberAssignedFlag(bool flag) {
+        writeBoolToEEPROM(SERIAL_ASSIGNED_ADDR, flag);
+    }
+
+    bool readSerialNumberAssignedFlag() {
+        return readBoolFromEEPROM(SERIAL_ASSIGNED_ADDR);
+    }
+
+    void writeResetConfigFlag(bool flag) {
+        writeBoolToEEPROM(RESET_ADDR_FLAG, flag);
+    }
+
+    bool readResetConfigFlag() {
+        return readBoolFromEEPROM(RESET_ADDR_FLAG);
+    }
+
+    void writeStandaloneModeToEEPROM(bool mode) {
+        writeBoolToEEPROM(STANDALONE_MODE_ADDR, mode);
+    }
+
+    bool readStandaloneModeFromEEPROM() {
+        return readBoolFromEEPROM(STANDALONE_MODE_ADDR);
+    }
+
+    // --- Upgrade Flag ---
+    void saveUpgradeFlag(bool value) {
+        writeBoolToEEPROM(UPGRADE_FLAG_ADDR, value);
+    }
+
+    bool loadUpgradeFlag() {
+        return readBoolFromEEPROM(UPGRADE_FLAG_ADDR);
+    }
+
+    void writeSmartNetAddress(uint8_t addr) {
+        EEPROM.write(SMARTNET_ADDR_EEPROM, addr);
+        EEPROM.commit();
+    }
+    
+    uint8_t readSmartNetAddress() {
+        return EEPROM.read(SMARTNET_ADDR_EEPROM);
+    }
+
+    // --- Update Helper ---
+    void updateEEPROMIfNeeded(int address, byte value) {
+        if (EEPROM.read(address) != value) {
+            EEPROM.write(address, value);
+            EEPROM.commit();
+        }
+    }    
 
 // --- Reset All (if needed)
 void resetParameters() {
@@ -191,9 +227,12 @@ void resetParameters() {
     apPassword[sizeof(apPassword) - 1] = '\0';
     writeStringToEEPROM(CUSTOM_AP_PASS_ADDR, String(apPassword));
 
+    String defaultLocation = "location";
+    writeLocationToEEPROM(defaultLocation);
+
     // --- Flags
     resetConfig = true;
-    SmartCore_EEPROM::writeResetConfigFlag(true);
+    writeResetConfigFlag(true);
     
     wifiSetupComplete = false;
     writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, false);
@@ -209,8 +248,11 @@ void resetParameters() {
 
     standaloneFlag = false;
 
-    // First WiFi connect flag
+    // Reset first WiFi connect flag
     writeFirstWiFiConnectFlag(true);
+
+    // Reset serial number assigned flag
+    writeSerialNumberAssignedFlag(false);
 
     // --- MQTT reset
     customMqtt = false;

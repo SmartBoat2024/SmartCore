@@ -250,10 +250,15 @@ namespace SmartCore_WiFi {
         wifiManager->setConnectTimeout(20);
         wifiManager->setConfigPortalTimeout(180);
         wifiManager->setDebugOutput(true);
+
+        //Update custom_serial to the generic module serial number before starting portal
+        custom_serial = new ESPAsync_WMParameter("serialNumber", "Please Enter Serial Number", serialNumber, 40);
+        custom_webname = new ESPAsync_WMParameter("CustomWebName", "Please Enter a Custom Webname", webnamechar, 40);
+
     
         if (!wifiManagerInitialized) {
-            wifiManager->addParameter(&custom_serial);
-            wifiManager->addParameter(&custom_webname);
+            wifiManager->addParameter(custom_serial);
+            wifiManager->addParameter(custom_webname);
             wifiManagerInitialized = true;
         }
     
@@ -318,18 +323,22 @@ namespace SmartCore_WiFi {
         logMessage(LOG_INFO, String("🧠 autoProvisioned = ") + (autoProvisioned ? "true" : "false"));
         if (!autoProvisioned){
                 // Serial Number
-            const char* serialFromForm = custom_serial.getValue();
+            const char* serialFromForm = custom_serial->getValue();
             if (serialFromForm && strlen(serialFromForm) > 0) {
                 strncpy(serialNumber, serialFromForm, sizeof(serialNumber) - 1);
                 serialNumber[sizeof(serialNumber) - 1] = '\0';
                 SmartCore_EEPROM::writeSerialNumberToEEPROM();
+                serialNumberAssigned = true;
+                SmartCore_EEPROM::writeSerialNumberAssignedFlag(true);
             } else {
                 logMessage(LOG_WARN, "⚠️ custom_serial was null or empty.");
+                serialNumberAssigned = false;
+                SmartCore_EEPROM::writeSerialNumberAssignedFlag(false);
             }
 
             // Webname
             if(!smartConnectEnabled){
-                const char* webnameFromForm = custom_webname.getValue();
+                const char* webnameFromForm = custom_webname->getValue();
                 if (webnameFromForm && strlen(webnameFromForm) > 0) {
                     strncpy(webnamechar, webnameFromForm, sizeof(webnamechar) - 1);
                     webnamechar[sizeof(webnamechar) - 1] = '\0';

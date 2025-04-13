@@ -11,10 +11,19 @@
 #include "SmartCore_Log.h"
 #include <SmartConnect_Async_WiFiManager.h>
 #include "SmartCore_WiFi.h"
+#include "SmartCore_MQTT.h"
+#include <ArduinoJson.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncWebSocket.h>
+#include <otadrive_esp.h>
+#include "SmartCore_SmartNet.h"
+#include "SmartCore_MCP.h"
+
 
 namespace SmartCore_System {
 
     TaskHandle_t resetButtonTaskHandle = NULL;
+    TaskHandle_t otaTaskHandle = NULL;
 
     const unsigned long holdTime = 5000;
     unsigned long buttonPressStart = 0;
@@ -37,12 +46,9 @@ namespace SmartCore_System {
         strncpy(serialNumber, settings.serialNumber, sizeof(serialNumber) - 1);
         serialNumber[sizeof(serialNumber) - 1] = '\0';
     
-        strncpy(moduleName, settings.moduleName, sizeof(moduleName) - 1);
-        moduleName[sizeof(moduleName) - 1] = '\0';
-    
         // 💾 WRITE TO EEPROM
         SmartCore_EEPROM::writeStringToEEPROM(SN_ADDR, String(settings.serialNumber));
-        SmartCore_EEPROM::writeStringToEEPROM(MOD_NAME_ADDR, String(settings.moduleName));
+        SmartCore_EEPROM::writeModuleNameToEEPROM(settings.moduleName);
     }
 
     void preinit(){
@@ -67,6 +73,13 @@ namespace SmartCore_System {
         xTaskCreatePinnedToCore(checkresetButtonTask,   "Check Reset Button",  4096, NULL, 1, &resetButtonTaskHandle,        0);
         initSmartCoreLED();
         SmartCore_I2C::init();
+        SmartCore_MCP::init();
+        //  SmartNet init + task
+        if (SmartCore_SmartNet::initSmartNet()) {
+            xTaskCreatePinnedToCore(SmartCore_SmartNet::smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &SmartCore_SmartNet::smartNetTaskHandle, 1);
+        } else {
+            logMessage(LOG_ERROR, "❌ Failed to initialize SmartNet CAN bus");
+        }
         SmartCore_WiFi::startWiFiManagerTask();
     }
 
@@ -90,6 +103,8 @@ namespace SmartCore_System {
         
         strncpy(apPassword, SmartCore_EEPROM::readStringFromEEPROM(CUSTOM_AP_PASS_ADDR, 40).c_str(), sizeof(apPassword) - 1);
         apPassword[sizeof(apPassword) - 1] = '\0';  // Ensure null termination
+
+        location = SmartCore_EEPROM::readLocationFromEEPROM();
         
         // Read custom MQTT enabled flag
         customMqtt = SmartCore_EEPROM::readBoolFromEEPROM(CUSTOM_MQTT_ADDR);
@@ -114,6 +129,14 @@ namespace SmartCore_System {
             logMessage(LOG_INFO, "Custom MQTT Server: "); Serial.println(custom_mqtt_server);
             logMessage(LOG_INFO, "Custom MQTT Port: "); Serial.println(custom_mqtt_port);
         }
+
+        // Read first WiFi connect flag
+        firstWiFiConnect = SmartCore_EEPROM::readFirstWiFiConnectFlag();
+        logMessage(LOG_INFO, "📡 firstWiFiConnect: " + String(firstWiFiConnect));
+
+        // Read serial number assigned flag
+        serialNumberAssigned = SmartCore_EEPROM::readSerialNumberAssignedFlag();
+        logMessage(LOG_INFO, "🧠 serialNumberAssigned: " + String(serialNumberAssigned));
     
         isUpgradeAvailable = SmartCore_EEPROM::loadUpgradeFlag();
     
@@ -124,15 +147,7 @@ namespace SmartCore_System {
         smartConnectEnabled = EEPROM.read(SC_BOOL_ADDR) == 1;
         logMessage(LOG_INFO, "smartConnect: " + String(smartConnectEnabled));
     
-        // Read module name and set default if not stored
-        static char moduleNameBuffer[50];
-        SmartCore_EEPROM::readModuleNameFromEEPROM(moduleNameBuffer, sizeof(moduleNameBuffer));
-        _settings.moduleName = moduleNameBuffer;
-
-        if (_settings.moduleName == nullptr || strlen(_settings.moduleName) == 0) {
-            _settings.moduleName = "Smart Module";
-            SmartCore_EEPROM::writeModuleNameToEEPROM(_settings.moduleName, 50);
-        }
+        moduleName = SmartCore_EEPROM::readModuleNameFromEEPROM();
 
         getModuleSpecificConfig();  //call module specific config here
     }
@@ -157,7 +172,7 @@ namespace SmartCore_System {
                     buttonPressed = true;
                 } else {
                     if (millis() - buttonPressStart >= holdTime) {
-                        Serial.println("🟢 Reset module triggered — launching reset worker...");
+                        logMessage(LOG_INFO, "🟢 Reset module triggered — launching reset worker...");
     
                         // Clear handle BEFORE deleting self
                         resetButtonTaskHandle = NULL;
@@ -178,30 +193,114 @@ namespace SmartCore_System {
     }
 
     void resetWorkerTask(void *param) {
+        SmartCore_EEPROM::resetParameters();  // ⚙️ Clean config wipe
     
-        SmartCore_EEPROM::resetParameters();
-        
         Serial.println("🧹 Suspending other tasks...");
-    
-    
         TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
     
-        // Suspend others except this task
-        //if (otaTaskHandle && otaTaskHandle != currentTask)              vTaskSuspend(otaTaskHandle);
-        //if (smartNetTaskHandle && smartNetTaskHandle != currentTask)           vTaskSuspend(smartNetTaskHandle);
-    
-        //if (wifiMqttCheckTaskHandle && wifiMqttCheckTaskHandle != currentTask)    vTaskSuspend(wifiMqttCheckTaskHandle);
-        if (flashLEDTaskHandle && flashLEDTaskHandle != currentTask)         vTaskSuspend(flashLEDTaskHandle);
+        if (otaTaskHandle && otaTaskHandle != currentTask)                      vTaskSuspend(otaTaskHandle);
+        if (wifiMqttCheckTaskHandle && wifiMqttCheckTaskHandle != currentTask) vTaskSuspend(wifiMqttCheckTaskHandle);
+        if (SmartCore_MQTT::metricsTaskHandle && SmartCore_MQTT::metricsTaskHandle != currentTask) vTaskSuspend(SmartCore_MQTT::metricsTaskHandle);
+        if (SmartCore_MQTT::timeSyncTaskHandle && SmartCore_MQTT::timeSyncTaskHandle != currentTask) vTaskSuspend(SmartCore_MQTT::timeSyncTaskHandle);
+        if (flashLEDTaskHandle && flashLEDTaskHandle != currentTask)           vTaskSuspend(flashLEDTaskHandle);
         if (provisioningBlinkTaskHandle && provisioningBlinkTaskHandle != currentTask) vTaskSuspend(provisioningBlinkTaskHandle);
-        if (SmartCore_WiFi::wifiManagerTaskHandle && SmartCore_WiFi::wifiManagerTaskHandle != currentTask)      vTaskSuspend(SmartCore_WiFi::wifiManagerTaskHandle);
+        if (SmartCore_WiFi::wifiManagerTaskHandle && SmartCore_WiFi::wifiManagerTaskHandle != currentTask) vTaskSuspend(SmartCore_WiFi::wifiManagerTaskHandle);
+        //if (smartNetTaskHandle && smartNetTaskHandle != currentTask)           vTaskSuspend(smartNetTaskHandle);
+        // TODO: re-enable SmartNet suspend if needed
     
         Serial.println("✅ All tasks suspended.");
-        setRGBColor(0, 255, 0);  // Visual cue
+        setRGBColor(0, 255, 0);  // 🟢 Visual feedback
     
-        // Do not touch flash, EEPROM, or heavy lifting at this point
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(250));  // Let things settle
         Serial.println("♻️ Restarting...");
-        esp_restart();  // Use lower-level version to avoid any Arduino cleanup hang
+        esp_restart();  // 💥 Full restart
+    }
+
+    void otaTask(void *parameter) {
+        while (true) {
+            if (shouldUpdateFirmware) {
+                logMessage(LOG_INFO, "🚀 Starting OTA update...");
+    
+                if (flashLEDTaskHandle) vTaskSuspend(flashLEDTaskHandle);
+                if (wifiMqttCheckTaskHandle) vTaskSuspend(wifiMqttCheckTaskHandle);
+                if (resetButtonTaskHandle) vTaskSuspend(resetButtonTaskHandle);
+                if (provisioningBlinkTaskHandle) vTaskSuspend(provisioningBlinkTaskHandle);
+                if (SmartCore_MQTT::metricsTaskHandle) vTaskSuspend(SmartCore_MQTT::metricsTaskHandle);
+                if (SmartCore_MQTT::timeSyncTaskHandle) vTaskSuspend(SmartCore_MQTT::timeSyncTaskHandle);
+                //if (smartNetTaskHandle && smartNetTaskHandle != currentTask) vTaskSuspend(smartNetTaskHandle);
+    
+                ota();  // 🔁 Call your OTA handler — must yield or watch-dog safe!
+    
+                if (flashLEDTaskHandle) vTaskResume(flashLEDTaskHandle);
+                if (wifiMqttCheckTaskHandle) vTaskResume(wifiMqttCheckTaskHandle);
+                if (resetButtonTaskHandle) vTaskResume(resetButtonTaskHandle);
+                if (provisioningBlinkTaskHandle) vTaskResume(provisioningBlinkTaskHandle);
+                if (SmartCore_MQTT::metricsTaskHandle) vTaskResume(SmartCore_MQTT::metricsTaskHandle);
+                if (SmartCore_MQTT::timeSyncTaskHandle) vTaskResume(SmartCore_MQTT::timeSyncTaskHandle);
+                //if (smartNetTaskHandle && smartNetTaskHandle != currentTask) vTaskResume(smartNetTaskHandle);
+    
+                logMessage(LOG_INFO, "✅ OTA complete. System tasks resumed.");
+                shouldUpdateFirmware = false;
+            }
+    
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    
+        vTaskDelete(NULL);  
+    }
+
+    void onUpdateProgress(int progress, int total) {
+        int percent = (progress * 100) / total;
+        static int lastPercent = -1;
+    
+        if (percent != lastPercent) {
+            lastPercent = percent;
+    
+            char progressMsg[50];
+            snprintf(progressMsg, sizeof(progressMsg), "Progress: %d%%\n", percent);
+            Serial.print(progressMsg);
+    
+            DynamicJsonDocument progressDoc(256);
+            progressDoc["type"] = "otaProgress";
+            progressDoc["serial"] = serialNumber;
+            progressDoc["progress"] = percent;
+    
+            String progressJson;
+            serializeJson(progressDoc, progressJson);
+    
+            #if WEBSERVER_ENABLED
+            ws.textAll(progressJson);
+            #endif
+    
+            if (mqttIsConnected) {
+                mqttClient.publish((String(mqttPrefix) + "/ota/progress").c_str(), 0, false, progressJson.c_str());
+            }
+        }
+    }
+
+    void ota() {
+        Serial.println("Calling OTADRIVE.updateFirmware()...");
+        updateInfo result = OTADRIVE.updateFirmware();
+    
+        DynamicJsonDocument resultDoc(128);
+        resultDoc["type"] = "otaProgress";
+        resultDoc["progress"] = result.available ? 100 : -1;
+    
+        String resultJson;
+        serializeJson(resultDoc, resultJson);
+    
+        #if WEBSERVER_ENABLED
+            ws.textAll(resultJson);  // Guarded by flag
+        #endif
+    
+        if (result.available) {
+            logMessage(LOG_INFO, "ota update successful");
+            isUpgradeAvailable = false;
+            logMessage(LOG_INFO, "OTA update completed successfully. Version: " + String(result.version));
+        } else {
+            Serial.println("ota update failed!!");
+            logMessage(LOG_WARN, "OTA update failed or no update available.");
+        }
     }
     
 }

@@ -4,20 +4,20 @@
 #include <EEPROM.h>
 #include "SmartCore_Config.h"
 
+#define EEPROM_STR_LEN     39   // Max usable characters (String)
+#define EEPROM_STR_TOTAL   40   // Includes null terminator
+
 namespace SmartCore_EEPROM {
+
     void init(const SmartCoreSettings& settings);
 
-    // --- EEPROM Integer Read/Write ---
+    // --- Integer Read/Write ---
     int readIntFromEEPROM(int address);
     void writeIntToEEPROM(int number, int address);
 
     // --- EEPROM Strings (Arduino String) ---
     String readStringFromEEPROM(int address, int maxLength);
-    void writeStringToEEPROM(int address, const String& data);
-
-    // --- EEPROM C-Strings (char arrays) ---
-    void writeCStringToEEPROM(int address, const char* str, size_t maxLen);
-    void readCStringFromEEPROM(int address, char* dest, size_t maxLen);
+    void writeStringToEEPROM(int address, String data);
 
     // --- EEPROM Booleans ---
     void writeBoolToEEPROM(int address, bool value);
@@ -38,8 +38,12 @@ namespace SmartCore_EEPROM {
     char* readCustomWebnameFromEEPROM();
 
     // --- EEPROM Module Name ---
-    void writeModuleNameToEEPROM(const char* moduleName, size_t maxLen);
-    void readModuleNameFromEEPROM(char* moduleName, size_t maxLen);
+    void writeModuleNameToEEPROM(const String& moduleName);
+    String readModuleNameFromEEPROM();
+
+    // --- EEPROM Location Name ---
+    void writeLocationToEEPROM(const String& location);
+    String readLocationFromEEPROM();
 
     // --- EEPROM Flags ---
     void writeSmartBoatToEEPROM(bool smartBoat);
@@ -54,13 +58,18 @@ namespace SmartCore_EEPROM {
     void writeFirstWiFiConnectFlag(bool flag);
     bool readFirstWiFiConnectFlag();
 
+    void writeSerialNumberAssignedFlag(bool flag);
+    bool readSerialNumberAssignedFlag();
+
+    void writeSmartNetAddress(uint8_t addr);
+    uint8_t readSmartNetAddress();
+
     // --- Upgrade Tracking ---
     void saveUpgradeFlag(bool value);
     bool loadUpgradeFlag();
 
-    // --- Full Reset (placeholder) ---
     void resetParameters();
-    void resetModuleSpecificParameters(); 
+    void resetModuleSpecificParameters();
 }
 
 // --- EEPROM Address Map ---
@@ -91,5 +100,11 @@ namespace SmartCore_EEPROM {
 #define CUSTOM_AP_NAME_ADDR         250
 #define CUSTOM_AP_PASS_ADDR         290
 
-#define EEPROM_RESERVED            291    // Reserved
-#define EEPROM_TOTAL_SIZE          350    // Set in main template
+#define SERIAL_ASSIGNED_ADDR         291
+
+#define MOD_LOCATION_ADDR           292
+
+#define SMARTNET_ADDR_EEPROM          332
+
+#define EEPROM_RESERVED            350    // Reserved
+#define EEPROM_TOTAL_SIZE          400   // Set in main template

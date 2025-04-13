@@ -12,6 +12,9 @@ namespace SmartCore_System {
     extern unsigned long buttonPressStart;
     extern bool buttonPressed;
 
+    extern TaskHandle_t otaTaskHandle;
+    extern TaskHandle_t resetButtonTaskHandle;
+
     void preinit();
     void init();
     void setModuleSettings(const SmartCoreSettings& settings);
@@ -20,6 +23,9 @@ namespace SmartCore_System {
     void createAppTasks();
     void checkresetButtonTask(void *parameter);
     void resetWorkerTask(void *param);
+    void otaTask(void *parameter);
+    void onUpdateProgress(int progress, int total);
+    void ota();
 
 }
 

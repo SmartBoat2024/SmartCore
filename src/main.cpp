@@ -10,8 +10,9 @@
 
 // Define the EEPROM size and the end of the SmartCore settings
 #define EEPROM_SIZE 1024
-#define SMARTCORE_EEPROM_END 350  // SmartCore settings end at address 200
+#define SMARTCORE_EEPROM_END 400  // SmartCore settings end at address 200
 #define WebServerEnabled true  //determines if webservices should start
+
 
 // ========================
 //  Module Settings
