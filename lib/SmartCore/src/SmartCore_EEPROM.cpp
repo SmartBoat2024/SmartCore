@@ -1,6 +1,10 @@
 #include "SmartCore_EEPROM.h"
 #include "SmartCore_Webserver.h"
+#include "SmartCore_System.h"
+#include "SmartCore_Network.h"
+#include "SmartCore_Log.h"
 #include "config.h"
+#include <SmartConnect_Async_WiFiManager.h>
 
 namespace SmartCore_EEPROM {
 
@@ -23,10 +27,10 @@ void writeIntToEEPROM(int number, int address) {
 
 // --- Serial Number
 void writeSerialNumberToEEPROM() {
-    size_t length = strlen(_settings.serialNumber); 
+    size_t length = strlen(serialNumber); 
     if (length >= 39) length = 38;
     for (size_t i = 0; i < length; ++i) {
-        EEPROM.write(SN_ADDR + i, _settings.serialNumber[i]);
+        EEPROM.write(SN_ADDR + i, serialNumber[i]);
     }
     EEPROM.write(SN_ADDR + length, '\0');
     EEPROM.commit();
@@ -129,7 +133,7 @@ String readStringFromEEPROM(int address, int maxLength) {
     return String(buffer);
 }
 
-void writeStringToEEPROM(int address, String data) {
+void writeStringToEEPROM(int address, const String& data) {
     int length = data.length();
     for (int i = 0; i < length; ++i) {
         EEPROM.write(address + i, data[i]);
@@ -170,9 +174,70 @@ bool loadUpgradeFlag() {
 
 // --- Reset All (if needed)
 void resetParameters() {
-    // Call each of the above with default values
-    // This will get expanded later
-    Serial.println("⚠️ EEPROM reset not fully implemented yet.");
+    logMessage(LOG_INFO, "🔄 Resetting parameters to default...");
+
+    // --- Webname
+    webname = "smartmodule";
+    writeStringToEEPROM(WEBNAME_ADDR, webname);
+    strncpy(webnamechar, webname.c_str(), sizeof(webnamechar) - 1);
+    webnamechar[sizeof(webnamechar) - 1] = '\0';
+
+    // --- WiFi AP credentials
+    strncpy(apName, "SmartConnectAP", sizeof(apName) - 1);
+    apName[sizeof(apName) - 1] = '\0';
+    writeStringToEEPROM(CUSTOM_AP_NAME_ADDR, String(apName));
+
+    strncpy(apPassword, "12345678", sizeof(apPassword) - 1);
+    apPassword[sizeof(apPassword) - 1] = '\0';
+    writeStringToEEPROM(CUSTOM_AP_PASS_ADDR, String(apPassword));
+
+    // --- Flags
+    resetConfig = true;
+    SmartCore_EEPROM::writeResetConfigFlag(true);
+    
+    wifiSetupComplete = false;
+    writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, false);
+
+    smartConnectEnabled = false;
+    writeBoolToEEPROM(SC_BOOL_ADDR, false);
+
+    smartBoatEnabled = false;
+    writeBoolToEEPROM(SB_BOOL_ADDR, false);
+
+    standaloneMode = false;
+    writeStandaloneModeToEEPROM(false);
+
+    standaloneFlag = false;
+
+    // First WiFi connect flag
+    writeFirstWiFiConnectFlag(true);
+
+    // --- MQTT reset
+    customMqtt = false;
+    writeBoolToEEPROM(CUSTOM_MQTT_ADDR, false);
+
+    memset(custom_mqtt_server, 0, sizeof(custom_mqtt_server));
+    writeStringToEEPROM(CUSTOM_MQTT_SERVER_ADDR, String(""));
+
+    custom_mqtt_port = 1883;
+    writeIntToEEPROM(CUSTOM_MQTT_PORT_ADDR, 1883);
+
+    // --- Commit all
+    if (!EEPROM.commit()) {
+        logMessage(LOG_ERROR, "❌ Failed to commit EEPROM changes during reset");
+    } else {
+        logMessage(LOG_INFO, "✅ EEPROM values reset and committed successfully");
+    }
+
+    delay(250);
+
+    // --- Call user-defined overrides (if provided)
+    resetModuleSpecificParameters();
+}
+
+void __attribute__((weak)) resetModuleSpecificParameters() {
+    logMessage(LOG_INFO, "🧩 No module-specific reset logic provided.");
 }
 
 } // namespace
+

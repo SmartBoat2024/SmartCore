@@ -33,6 +33,7 @@ extern SemaphoreHandle_t ledMutex;
 // Task handle
 extern TaskHandle_t flashLEDTaskHandle;
 extern TaskHandle_t provisioningBlinkTaskHandle;
+extern TaskHandle_t wifiMqttCheckTaskHandle;
 
 // LED control mode enum
 enum LEDMode {
@@ -58,11 +59,16 @@ enum ProvisioningState {
 extern volatile LEDMode currentLEDMode;
 extern DebugColor currentDebugColor;
 extern ProvisioningState currentProvisioningState;
+extern String flashPattern;
 
 // Function declarations
 void initSmartCoreLED();
 void setRGBColor(uint8_t r, uint8_t g, uint8_t b);
-void triggerFlashPattern(const String& pattern, uint32_t colorHex);
+void triggerFlashPattern(const String& pattern, DebugColor color);
 void flashLEDTask(void* parameter);
 void provisioningBlinkTask(void* parameter);
 void turnOffRGBLEDs();
+void setLEDMode(LEDMode mode);
+void wifiMqttCheckTask(void *parameter);
+void setFailedWiFiCredsTask(void *parameter);
+

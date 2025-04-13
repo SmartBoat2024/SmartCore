@@ -5,35 +5,39 @@
 #include "SmartCore_I2C.h"
 #include "SmartCore_MCP.h"
 #include "config.h"
+#define ESPASYNC_WIFI_MANAGER_IMPLEMENTATION
+#include <SmartConnect_Async_WiFiManager.h>
 
 // Define the EEPROM size and the end of the SmartCore settings
 #define EEPROM_SIZE 1024
-#define SMARTCORE_EEPROM_END 200  // SmartCore settings end at address 200
+#define SMARTCORE_EEPROM_END 350  // SmartCore settings end at address 200
+#define WebServerEnabled true  //determines if webservices should start
 
 // ========================
 //  Module Settings
 // ========================
 
 SmartCoreSettings myModuleSettings = {
-    .serialNumber = "rel80001",
-    .moduleName = "Smart Terminal Controller"
+    .serialNumber = "rel8XXXX",
+    .moduleName = "Smart Relay Controller"
 };
 
 //////////////////////////////////////////////////////////////
 
 // --- Setup Function ---
 void setup() {
-  // Initialize the core SmartCore system (EEPROM, I2C, LEDs, etc.)
-    SmartCore_System::setModuleSettings(myModuleSettings);
+    SmartCore_System::preinit();
+    // Initialize the core SmartCore system (EEPROM, I2C, LEDs, etc.)
+    if (resetConfig){
+      SmartCore_System::setModuleSettings(myModuleSettings);
+      Serial.println("default settings applied");
+      delay(1000);
+    }  
+  
     SmartCore_System::init();
 
   // Custom module setup code goes here:
   // Initialize sensors, modules, etc.
-
-  // Access the serial number
-  const char* sn = SmartCore_System::getModuleSettings().serialNumber;
-  Serial.print("✅ Module Serial Number: ");
-  Serial.println(sn);
 
   // Log the system initialization for debugging purposes
   logMessage(LOG_INFO, "Module initialized successfully.");
@@ -54,7 +58,7 @@ void loop() {
  * This function is used to reset any module-specific settings like sensor calibration,
  * relay states, or configurations.
  */
-void resetModuleParams() {
+void resetModuleSpecificParameters() {
   // Reset module-specific parameters (e.g., clear sensor data, reset state)
   // Example: resetRelayStates();
 
@@ -70,7 +74,7 @@ void resetModuleParams() {
  * This function is used to fetch the settings for the module (e.g., from EEPROM).
  * You should retrieve and configure the module's parameters here.
  */
-void getModuleConfig() {
+void getModuleSpecificConfig() {
   // Get module-specific settings from EEPROM or external sources
   // Example: loadRelayConfig();
 

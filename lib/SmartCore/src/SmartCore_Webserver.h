@@ -1,5 +1,6 @@
 #pragma once
 #include <arduino.h>
 
-String webname = "smartmodule";
-char webnamechar[40] = "smartmodule";
+
+extern void setupMDNS();
+extern void setupWebServer();

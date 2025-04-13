@@ -6,62 +6,90 @@
 
 namespace SmartCore_EEPROM {
     void init(const SmartCoreSettings& settings);
-    void writeSerialNumberToEEPROM();
-    const char* getSerialNumber();
-}
 
-// Start of strings (char arrays)
-#define SN_ADDR                    0      // Serial number (char[40])
-#define WEBNAME_ADDR               40     // Web name (char[40])
-#define MOD_NAME_ADDR              80     // Module name (char[40])
-
-// Start of flags (single bytes)
-#define CUSTOM_MQTT_ADDR           120    // 1 byte flag (Custom MQTT enabled?)
-#define WIFI_SETUP_COMPLETE_ADDR   121    // 1 byte flag (WiFi setup complete?)
-#define RESET_ADDR_FLAG            122    // 1 byte flag (Reset config flag)
-#define SB_BOOL_ADDR               123    // 1 byte flag (SmartBoat enabled?)
-
-// Start of configurations (like ports or IPs)
-#define CUSTOM_MQTT_SERVER_ADDR    124    // Max 40 bytes (Custom MQTT server address)
-#define CUSTOM_MQTT_PORT_ADDR      164    // 2 bytes (Custom MQTT port)
-#define STANDALONE_MODE_ADDR       166    // 1 byte flag (Standalone mode?)
-
-// Miscellaneous
-#define EEPROM_ADDR_FLAG           167    // 1 byte flag (First WiFi connection flag)
-#define UPGRADE_FLAG_ADDR          168    // 1 byte flag (Firmware upgrade flag)
-
-// Remaining EEPROM space reserved for data
-#define EEPROM_RESERVED            170    // Reserved for future use
-
-// Current max smartcore eeprom size is 200 - if this increases then modify the template (main.cpp)
-
-namespace SmartCore_EEPROM {
-        // Integer operations
+    // --- EEPROM Integer Read/Write ---
     int readIntFromEEPROM(int address);
     void writeIntToEEPROM(int number, int address);
 
-    // String operations
+    // --- EEPROM Strings (Arduino String) ---
     String readStringFromEEPROM(int address, int maxLength);
     void writeStringToEEPROM(int address, const String& data);
 
-    // Character array (C-string) operations
+    // --- EEPROM C-Strings (char arrays) ---
     void writeCStringToEEPROM(int address, const char* str, size_t maxLen);
     void readCStringFromEEPROM(int address, char* dest, size_t maxLen);
 
-    // Boolean operations
+    // --- EEPROM Booleans ---
     void writeBoolToEEPROM(int address, bool value);
     bool readBoolFromEEPROM(int address);
 
-    // Byte update
+    // --- EEPROM Update Utility ---
     void updateEEPROMIfNeeded(int address, byte value);
 
-    // Utility
+    // --- Boolean Display Utility ---
     String boolToString(bool value);
 
-    // Upgrade flag
+    // --- EEPROM Serial Number ---
+    void writeSerialNumberToEEPROM();
+    char* readSerialNumberFromEEPROM();
+
+    // --- EEPROM Custom Webname ---
+    void writeCustomWebnameToEEPROM();
+    char* readCustomWebnameFromEEPROM();
+
+    // --- EEPROM Module Name ---
+    void writeModuleNameToEEPROM(const char* moduleName, size_t maxLen);
+    void readModuleNameFromEEPROM(char* moduleName, size_t maxLen);
+
+    // --- EEPROM Flags ---
+    void writeSmartBoatToEEPROM(bool smartBoat);
+    bool readSmartBoatFromEEPROM();
+
+    void writeResetConfigFlag(bool flag);
+    bool readResetConfigFlag();
+
+    void writeStandaloneModeToEEPROM(bool mode);
+    bool readStandaloneModeFromEEPROM();
+
+    void writeFirstWiFiConnectFlag(bool flag);
+    bool readFirstWiFiConnectFlag();
+
+    // --- Upgrade Tracking ---
     void saveUpgradeFlag(bool value);
     bool loadUpgradeFlag();
 
-    // Reset parameters (placeholder)
+    // --- Full Reset (placeholder) ---
     void resetParameters();
+    void resetModuleSpecificParameters(); 
 }
+
+// --- EEPROM Address Map ---
+#define SN_ADDR                    0      // char[40] - Serial number
+#define WEBNAME_ADDR               40     // char[40] - Web name
+#define MOD_NAME_ADDR              80     // char[40] - Module name
+
+// --- Flag Byte Addresses ---
+#define CUSTOM_MQTT_ADDR           120    // 1 byte - Custom MQTT enabled
+#define WIFI_SETUP_COMPLETE_ADDR   121    // 1 byte - WiFi setup complete
+#define RESET_ADDR_FLAG            122    // 1 byte - Reset WiFi config
+#define SB_BOOL_ADDR               123    // 1 byte - SmartBoat mode
+#define SC_BOOL_ADDR               124    // 1 byte - SmartBoat mode
+
+
+// --- Configuration Addresses ---
+#define CUSTOM_MQTT_SERVER_ADDR    125    // char[40] - MQTT server
+#define CUSTOM_MQTT_PORT_ADDR      165    // 2 bytes - MQTT port
+#define STANDALONE_MODE_ADDR       167    // 1 byte - Standalone mode
+
+// --- Misc ---
+#define EEPROM_ADDR_FLAG           168    // 1 byte - First WiFi connect
+#define UPGRADE_FLAG_ADDR          169    // 1 byte - Firmware upgrade in progress
+
+#define WIFI_SSID_ADDR              170
+#define WIFI_PASS_ADDR              210
+
+#define CUSTOM_AP_NAME_ADDR         250
+#define CUSTOM_AP_PASS_ADDR         290
+
+#define EEPROM_RESERVED            291    // Reserved
+#define EEPROM_TOTAL_SIZE          350    // Set in main template
