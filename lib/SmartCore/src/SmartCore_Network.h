@@ -57,8 +57,6 @@ extern bool smartConnectEnabled;
 extern bool standaloneMode;
 extern bool standaloneFlag;
 extern bool autoProvisioned;
-extern bool shouldUpdateFirmware;
-extern bool isUpgradeAvailable;
 extern bool serialNumberAssigned;
 
 // --- Webserver ---

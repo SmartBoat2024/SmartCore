@@ -6,6 +6,7 @@
 #include "SmartCore_PGN.h"
 #include "config.h"
 #include "SmartCore_Log.h"
+#include "SmartCore_System.h"
 
 namespace SmartCore_SmartNet {
 
@@ -245,6 +246,10 @@ namespace SmartCore_SmartNet {
     
             if (millis() - lastHeartbeat >= 1000) {
                 sendHeartbeat();  // ❤️ Send heartbeat every second
+                
+                // 🧠 Runtime liveness confirmed
+                SmartCore_System::clearCrashCounter(CRASH_COUNTER_RUNTIME);
+                
                 lastHeartbeat = millis();
             }
     

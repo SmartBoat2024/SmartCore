@@ -40,6 +40,8 @@ void setup() {
   // Custom module setup code goes here:
   // Initialize sensors, modules, etc.
 
+  //Clears the crash counter
+  SmartCore_System::clearCrashCounter(CRASH_COUNTER_BOOT);
   // Log the system initialization for debugging purposes
   logMessage(LOG_INFO, "Module initialized successfully.");
 }

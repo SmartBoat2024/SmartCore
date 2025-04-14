@@ -48,8 +48,6 @@ bool smartConnectEnabled = false;
 bool standaloneMode = false;
 bool standaloneFlag = false;
 bool autoProvisioned = false;
-bool shouldUpdateFirmware = false;
-bool isUpgradeAvailable = false;
 bool serialNumberAssigned = false;
 
 // --- Webserver ---

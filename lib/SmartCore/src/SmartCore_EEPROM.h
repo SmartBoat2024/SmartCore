@@ -106,5 +106,8 @@ namespace SmartCore_EEPROM {
 
 #define SMARTNET_ADDR_EEPROM          332
 
-#define EEPROM_RESERVED            350    // Reserved
+#define CRASH_COUNTER_ADDR            350    // crash counter address
+#define RUNTIME_CRASH_COUNTER_ADDR            360    // crash counter address
+
+#define EEPROM_RESERVED            370    // Reserved
 #define EEPROM_TOTAL_SIZE          400   // Set in main template

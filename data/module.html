@@ -1,0 +1,70 @@
+<!-- Injected into Settings Popup -->
+<div class="module-settings-extension">
+    <div class="setup_voltmeters-container">
+      <button class="voltmeter-setup-btn" onclick="openVoltmeterSetupPopup()">Configure Voltmeters</button>
+    </div>
+  
+    <div class="setup_blocks-container">
+      <button class="block-setup-btn" onclick="openBlockSetupPopup()">Configure Blocks</button>
+    </div>
+  
+    <div class="setup_relays-container">
+      <button class="relays-setup-btn" onclick="openRelaySetupPopup()">Configure Relays</button>
+    </div>
+  </div>
+
+
+<div class=" module-popup-extension">
+    <div id="configModePop" class="popupConfigMode" style="display: none;">
+        <div class="configMode-content">
+          <span class="close" onclick="closeConfigModePopup()">&times;</span>
+          <h2>Select Configuration Mode</h2>
+          <div id="configModeImageContainer">
+            <img id="configModeImage" data-src="/images/configMode_4V.jpg" alt="Configuration Preview">
+          </div>
+          <div class="configMode-options">
+            <label><input type="radio" name="configMode" value="4V" onchange="updateConfigModeImage()"> 4 Voltmeters</label>
+            <label><input type="radio" name="configMode" value="2V1S" onchange="updateConfigModeImage()"> 2 Voltmeters, 1 Shunt</label>
+            <label><input type="radio" name="configMode" value="1S2V" onchange="updateConfigModeImage()"> 1 Shunt, 2 Voltmeters</label>
+            <label><input type="radio" name="configMode" value="2S" onchange="updateConfigModeImage()"> 2 Shunts</label>
+          </div>
+          <div class="button-group">
+            <button id="nextConfigModeBtn" onclick="confirmConfigModeSelection()">Next</button>
+            <button onclick="closeConfigModePopup()">Cancel</button>
+          </div>
+        </div>
+      </div>
+  
+      <div id="configConfirmPop" class="popupConfigConfirm" style="display: none;">
+        <div class="configConfirm-content">
+          <span class="close" onclick="closeConfigConfirmPopup()">&times;</span>
+          <h2>Confirm Wiring Setup</h2>
+          <div id="configConfirmImageContainer">
+            <img id="configConfirmImage" data-src="/images/wiringMode_4V.jpg" alt="Wiring Guide">
+          </div>
+          <p id="configConfirmMessage">Please follow the correct wiring setup for your selected mode.</p>
+          <div class="button-group">
+            <button id="confirmWiringBtn" onclick="finalizeConfigMode()">Confirm</button>
+            <button onclick="closeConfigConfirmPopup()">Cancel</button>
+          </div>
+          <div class="warning_message">
+            <p>WARNING - Previous setup data will be lost for changed ports!</p>
+          </div>
+        </div>
+    </div>
+
+    <!-- Voltmeter Setup Popup Container -->
+    <div id="voltmeterSetupPop" class="popupVoltmeterSetup" style="display: none;">
+        <div class="popup-content">
+            <span class="close" onclick="closeVoltmeterSetupPopup()">&times;</span>
+        </div>
+    </div>
+    
+</div>
+
+<div class=" module-control-extension">
+
+
+</div>
+  
+  

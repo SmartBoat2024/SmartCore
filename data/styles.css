@@ -1,0 +1,511 @@
+/* === GLOBAL BASE STYLES === */
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    max-height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    font-family: Arial, Helvetica, sans-serif;
+    background-color: #1f1f1f;
+    color: #ffffff;
+}
+
+p {
+    font-size: 1.2rem;
+}
+
+/* === BACKGROUND PATTERN === */
+.carbon-fiber {
+    background-image: 
+        linear-gradient(45deg, #2a2a2a 50%, transparent 50%),
+        linear-gradient(45deg, #2a2a2a 50%, transparent 50%);
+    background-size: 22.5px 22.5px;
+    background-position: 0 0, 11.25px 11.25px;
+}
+
+/* === STATUS BANNER === */
+#wsStatusBanner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background-color: #cc0000;
+    color: white;
+    font-weight: bold;
+    text-align: center;
+    padding: 10px;
+    z-index: 9999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    display: none;
+}
+
+/* === HEADINGS === */
+h1, h2 {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+h1 {
+    font-size: 1.5rem;
+}
+
+h2 {
+    margin: 25px 0 20px 0;
+}
+
+/* === TITLE BAR === */
+.titleBlock {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+.image-container {
+    background-color: #009473;
+    padding: 4px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    margin: 10px;
+}
+
+.settings-button {
+    display: inline-block;
+    text-decoration: none;
+    transition: background-color 0.3s;
+}
+
+.settings-button:hover {
+    background-color: #013220;
+}
+
+.settings-button svg {
+    vertical-align: middle;
+}
+
+/* === MODULE NAME DISPLAY === */
+.moduleName {
+    text-align: center;
+    margin: 0 0 20px 0;
+    font-size: 20px;
+}
+
+/* === MAIN MODULE DISPLAY AREA === */
+.main-container {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    width: 80%;
+    max-width: 1200px;
+    height: calc(100vh - 150px);
+    margin: 0 auto;
+    padding: 10px;
+    background-color: #333;
+    border: 2px solid white;
+    overflow: hidden;
+}
+
+#moduleContainer {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-top: 1px solid #444;
+    margin-top: 10px;
+}
+
+/* === POPUPS === */
+.popup, .popupSettings, .popupReset, .popupSmartboat, .popupUpgrade, .popupCustomMqtt {
+    display: none;
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    justify-content: center;
+    align-items: center;
+}
+
+.popup.active,
+.popupSettings.active,
+.popupReset.active,
+.popupSmartboat.active,
+.popupUpgrade.active,
+.popupCustomMqtt.active {
+    display: flex;
+}
+
+/* === POPUP CONTENT BOXES === */
+.popup-content,
+.reset-content,
+.smartboat-content,
+.popupUpgrade-content,
+.customMqtt-content {
+    background-color: #333;
+    color: white;
+    padding: 20px;
+    width: 80%;
+    max-width: 300px;
+    border: 1px solid #ccc;
+    border-radius: 20px;
+    position: relative;
+    text-align: center;
+    margin: auto;
+}
+
+/* === CLOSE BUTTON === */
+.close {
+    color: #aaa;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+}
+
+.close:hover {
+    color: #fff;
+}
+
+/* === FORM ELEMENTS === */
+.form-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-bottom: 15px;
+    width: 100%;
+  }
+
+  .slider-group {
+    margin-bottom: 5px;
+  }
+
+.form-group label {
+display: block;
+margin-bottom: 5px;
+}
+
+.input-with-suffix {
+    position: relative;
+    width: 100%;
+  }
+  
+
+.form-group input[type="text"] {
+padding: 10px;
+width: 100%;
+border: 1px solid #ccc;
+border-radius: 5px;
+background-color: #444;
+color: white;
+font-size: 14px;
+}
+
+.url-wrapper {
+display: flex;
+align-items: center;
+position: relative;
+width: fit-content;
+}
+
+#mqttServer,
+#mqttPort,
+#settingsModName,
+#settingsWebName {
+  width: 100%;
+  padding-right: 60px; /* Leave room for the .local text */
+  font-size: 1rem;
+  padding: 8px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+}
+
+.static-suffix {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ccc;
+  font-size: 1rem;
+  pointer-events: none;
+}
+
+.horizontal-line {
+    width: 70%;
+    height: 2px;
+    background-color: white;
+    margin: 20px auto;
+}
+
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 10px; /* Controls spacing between label, slider, and "Enable" */
+    margin-bottom: 5px;
+  }
+  
+  .toggle-switch .toggle-text.larger-text {
+    min-width: 120px; /* Optional: keep labels aligned vertically */
+    text-align: right;
+  }
+  
+
+.larger-text {
+    font-size: 16px;
+}
+
+.smaller-text {
+    font-size: 12px;
+}
+
+/* === TOGGLE STYLING === */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+    flex-shrink: 0;
+  }
+  
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.4s;
+    border-radius: 24px;
+  }
+  
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+  }
+  
+  input:checked + .slider {
+    background-color: #009473;
+  }
+  
+  input:checked + .slider::before {
+    transform: translateX(26px);
+  }
+  
+  .toggle-text.smaller-text {
+    font-size: 0.9rem;
+    color: #ccc;
+  }
+
+/* === BUTTON STYLING === */
+.reset-btn,
+.set-btn,
+.checkUpgrade-btn,
+.upgrade-btn-start,
+.confirm-customMQTT-btn,
+.cancel-customMQTT-btn,
+.upgrade-btn,
+.confirm-reset-btn,
+.confirm-restart-btn,
+.cancel-reset-btn,
+.cancel-restart-btn,
+.confirm-smartboat-btn,
+.cancel-smartboat-btn {
+    background-color: #009473;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    font-size: 1rem;
+    cursor: pointer;
+    border-radius: 10px;
+    margin-bottom: 10px;
+}
+
+.reset-btn:hover,
+.set-btn:hover,
+.checkUpgrade-btn:hover,
+.upgrade-btn-start:hover,
+.upgrade-btn:hover,
+.confirm-smartboat-btn:hover,
+.cancel-smartboat-btn:hover,
+.cancel-reset-btn:hover {
+    background-color: #013220;
+}
+
+.cancel-reset-btn,
+.cancel-smartboat-btn {
+    background-color: #9e9e9e;
+}
+
+.restart-info {
+    font-size: 10px;
+    margin-top: 5px;
+    text-align: center;
+    padding-top: 15px;
+    color: #ffffff;
+}
+
+/* === WARNING LABELS === */
+.reset-warning,
+.smartboat-warning {
+    color: red;
+    font-weight: bold;
+}
+
+/* === UPGRADE INDICATOR === */
+.upgrade-btn-container {
+    position: relative;
+}
+
+.notification-circle {
+    position: absolute;
+    top: -4px;
+    right: 95px;
+    width: 15px;
+    height: 15px;
+    background-color: red;
+    border-radius: 50%;
+    display: none;
+}
+
+/* === DISABLED STATE === */
+.upgrade-btn-start:disabled,
+.checkUpgrade-btn:disabled {
+    background-color: grey;
+    cursor: not-allowed;
+}
+
+.upgrade-btn-start:disabled:hover,
+.prevBtn:disabled:hover,
+.nextBtn:disabled:hover {
+    background-color: grey;
+}
+
+/* === OTA PROGRESS === */
+#otaProgressContainer {
+    z-index: 10001;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80%;
+    background-color: #ffffff;
+    border: 2px solid #009473;
+    border-radius: 10px;
+    padding: 20px;
+}
+
+#otaProgressBar {
+    width: 100%;
+    background-color: #e0e0e0;
+    border-radius: 10px;
+}
+
+#progressBarFill {
+    width: 0%;
+    height: 20px;
+    background-color: #009473;
+    border-radius: 10px;
+}
+
+#otaProgressText {
+    text-align: center;
+    margin-top: 10px;
+    color: #333;
+    font-size: 14px;
+}
+
+#otaProgressContainer h3 {
+    text-align: center;
+    color: #000;
+    font-size: 18px;
+}
+
+/* === FOOTER === */
+.footer-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 80px;
+    padding: 10px;
+    max-height: 120px;
+}
+
+.footer-container svg {
+    width: 200px;
+    height: auto;
+}
+
+.footer-container p a {
+    font-size: 28px;
+    color: #3498db !important;
+    margin: 0;
+}
+
+/* === MODULE SECTIONS (optional helper) === */
+.module-section {
+    background-color: #1e1e1e;
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 10px 0;
+}
+
+.module-section h3 {
+    margin-top: 0;
+    font-size: 1.3rem;
+    color: #eee;
+}
+
+/* === HELPERS === */
+.hidden {
+    display: none !important;
+}
+
+/* === LOADING SPINNER === */
+.loading-spinner {
+    border: 16px solid #f3f3f3;
+    border-top: 16px solid #3498db;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 2s linear infinite;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* === MOBILE === */
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column;
+    }
+}

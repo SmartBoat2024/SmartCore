@@ -9,6 +9,8 @@
 #include "SmartCore_System.h"
 #include "SmartCore_Webserver.h"
 #include <SmartConnect_Async_WiFiManager.h>
+#include "SmartCore_Webserver.h"
+#include <ESPmDNS.h>
 
 namespace SmartCore_WiFi {
 
@@ -31,6 +33,7 @@ namespace SmartCore_WiFi {
         wifiManagerStartTime = millis();
         logMessage(LOG_INFO, "📡 Starting WiFiManager Task...");
     
+        //resetConfig = true; //for testing only
         resetConfig = SmartCore_EEPROM::readResetConfigFlag();                          
         smartConnectEnabled = SmartCore_EEPROM::readBoolFromEEPROM(SC_BOOL_ADDR);      
         standaloneMode =  SmartCore_EEPROM::readBoolFromEEPROM(STANDALONE_MODE_ADDR);    
@@ -167,14 +170,32 @@ namespace SmartCore_WiFi {
             }
             else if (wifiSetupComplete) {
                 logMessage(LOG_INFO, "🔍 Attempting WiFi autoConnect...");
-    
+
+                if (dns) {
+                    logMessage(LOG_WARN, "♻️ Deleting old dns instance before reallocation...");
+                    delete dns;
+                    dns = nullptr;
+                }
+                
+                if (wifiManager) {
+                    logMessage(LOG_WARN, "♻️ Deleting old wifiManager instance...");
+                    delete wifiManager;
+                    wifiManager = nullptr;
+                }
+                
+                // Create new DNS and WiFiManager cleanly
+                logMessage(LOG_INFO, "🛠️ Creating new AsyncDNSServer...");
                 dns = new AsyncDNSServer();
+                
+                logMessage(LOG_INFO, "🛠️ Creating new WiFiManager...");
                 wifiManager = new ESPAsync_WiFiManager(&server, dns);
+                
                 bool res = wifiManager->autoConnect("SmartController");
                 vTaskDelay(pdMS_TO_TICKS(100));  // Let system breathe
     
                 if (!res) {
                     setupWiFiManager();  // fallback portal
+                    return;
                 } else {
                     logMessage(LOG_INFO, "✅ WiFiManager autoConnect success.");
                     currentLEDMode = LEDMODE_STATUS;
@@ -186,6 +207,7 @@ namespace SmartCore_WiFi {
                 currentLEDMode = LEDMODE_WAITING;
                 currentProvisioningState = PROVISIONING_PORTAL;
                 setupWiFiManager();
+                return;
             }
         }
     
@@ -389,10 +411,9 @@ namespace SmartCore_WiFi {
         // Always sync webname from char
         webname = String(webnamechar);
     
-        setupMDNS();
-        setupWebServer();
+        SmartCore_Websocket::setupMDNS();
+        SmartCore_Websocket::setupWebServer();
         #endif
-        //initSmartNet();
         
         smartBoatEnabled = true;  //for testing
 
@@ -409,6 +430,59 @@ namespace SmartCore_WiFi {
     
         SmartCore_System::createAppTasks();
     
+    }
+
+    //SAFE CONNECT FOR RECOVERY
+    void startMinimalWifiSetup() {
+
+        logMessage(LOG_INFO, "⛔ Erasing WiFi stack and credentials...");
+        WiFi.disconnect(true, true);
+        delay(100);
+        WiFi.mode(WIFI_OFF);
+        delay(100);
+
+        logMessage(LOG_INFO, "🧹 Resetting WiFiManager settings...");
+        if (wifiManager) {
+            wifiManager->resetSettings();
+            delete wifiManager;
+            wifiManager = nullptr;
+        }
+
+        if (dns) {
+            delete dns;
+            dns = nullptr;
+        }
+
+        dns = new AsyncDNSServer();
+        wifiManager = new ESPAsync_WiFiManager(&server, dns, "SmartCtrl");
+
+        // Dual-mode setup
+        WiFi.softAPdisconnect(true);
+        delay(100);
+        WiFi.mode(WIFI_AP_STA);
+        delay(100);
+
+        wifiManager->setConnectTimeout(20);
+        wifiManager->setConfigPortalTimeout(180);
+        wifiManager->setDebugOutput(true);
+
+        logMessage(LOG_INFO, "🔍 Attempting WiFi autoConnect...");
+        wifiManager->startConfigPortal("SmartSafeConnect");
+        
+        if (WiFi.status() == WL_CONNECTED) {
+            if (MDNS.begin("recovery")) {
+                logMessage(LOG_INFO, "✅ mDNS started");
+                MDNS.addService("http", "tcp", 81);
+            } else {
+                logMessage(LOG_WARN, "⚠️ Failed to start mDNS");
+            }
+        
+            logMessage(LOG_INFO, "✅ WiFi connected via WiFiManager.");
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+            logMessage(LOG_INFO, "✅ WiFi connected via WiFiManager.");
+        }
     }
 
 }

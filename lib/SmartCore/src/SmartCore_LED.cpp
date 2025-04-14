@@ -253,8 +253,6 @@ void setFailedWiFiCredsTask(void *parameter) {
     vTaskDelete(NULL);  // End the task when done
 }
 
-
-
 void turnOffRGBLEDs() {
     logMessage(LOG_INFO, "Turning off LEDs via PWM");
     setRGBColor(0, 0, 0);  // Set to black/off via PWM

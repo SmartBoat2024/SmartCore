@@ -11,6 +11,7 @@
 #include "SmartCore_System.h"
 #include <otadrive_esp.h>
 #include "mqtt_handlers.h"
+#include "SmartCore_OTA.h"
 
 namespace SmartCore_MQTT {
     char mqttWillTopic[64];
@@ -371,9 +372,9 @@ namespace SmartCore_MQTT {
         if (action == "upgrade") {
             if (confirm) {
                 Serial.println("✅ OTA confirmed. Spawning OTA task...");
-                shouldUpdateFirmware = true;
-                if (SmartCore_System::otaTaskHandle == nullptr) {
-                    xTaskCreatePinnedToCore(SmartCore_System::otaTask, "OTATask", 8192, NULL, 1, &SmartCore_System::otaTaskHandle, 1);
+                SmartCore_OTA::shouldUpdateFirmware = true;
+                if (SmartCore_OTA::otaTaskHandle == nullptr) {
+                    xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTATask", 8192, NULL, 1, &SmartCore_OTA::otaTaskHandle, 1);
                 }
             } else {
                 Serial.println("⚠️ Upgrade requested but not confirmed. Ignoring.");
@@ -399,7 +400,7 @@ namespace SmartCore_MQTT {
             if (!inf.available) {
                 response["message"] = "System is up to date.";
             } else {
-                isUpgradeAvailable = true;
+                SmartCore_OTA::isUpgradeAvailable = true;
                 SmartCore_EEPROM::saveUpgradeFlag(true);
                 response["message"] = "Upgrade available.";
             }
@@ -538,6 +539,10 @@ namespace SmartCore_MQTT {
 
     void metricsTask(void *parameter) {
         logMessage(LOG_INFO, "📊 Metrics task started.");
+
+        // Simulate a crash during startup
+        //int* ptr = nullptr;
+        //*ptr = 42;  // 💥 Boom
 
         // Temperature sensor config
         temp_sensor_config_t temp_sensor = {

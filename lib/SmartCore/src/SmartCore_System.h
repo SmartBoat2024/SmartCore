@@ -6,8 +6,17 @@
 #include "SmartCoreVersion.h"
 #include "SmartCore_config.h"
 
+#define CRASH_LIMIT_RESET  3
+#define CRASH_LIMIT_SAFE   6
+
+enum CrashCounterType {
+    CRASH_COUNTER_BOOT,
+    CRASH_COUNTER_RUNTIME,
+    CRASH_COUNTER_ALL  // for full wipes if ever needed
+};
 
 namespace SmartCore_System {
+
     extern const unsigned long holdTime;
     extern unsigned long buttonPressStart;
     extern bool buttonPressed;
@@ -23,9 +32,8 @@ namespace SmartCore_System {
     void createAppTasks();
     void checkresetButtonTask(void *parameter);
     void resetWorkerTask(void *param);
-    void otaTask(void *parameter);
-    void onUpdateProgress(int progress, int total);
-    void ota();
+    void clearCrashCounter(CrashCounterType type);
+    void enterSafeMode();
 
 }
 
