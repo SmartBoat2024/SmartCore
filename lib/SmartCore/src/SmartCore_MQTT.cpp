@@ -119,8 +119,15 @@ namespace SmartCore_MQTT {
             Serial.println("🛑 Reconnect task stopped");
         }
     
-        // Subscribe to topics
-        mqttClient.subscribe((String(mqttPrefix) + "/#").c_str(), 1);
+        // Subscribe to module-specific topic: serialNumber/#
+        String serialTopic = String(serialNumber) + "/#";
+        mqttClient.subscribe(serialTopic.c_str(), 1);
+        Serial.print("✅ Subscribed to ");
+        Serial.println(serialTopic);
+
+        // Subscribe to global update topic
+        mqttClient.subscribe("update/#", 1);
+        Serial.println("✅ Subscribed to update/#");
     
         // Publish initial presence messages
         mqttClient.publish((String(mqttPrefix) + "/connected").c_str(), 1, true, "connected");
