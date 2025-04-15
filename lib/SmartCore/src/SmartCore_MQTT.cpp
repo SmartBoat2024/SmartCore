@@ -249,7 +249,7 @@ namespace SmartCore_MQTT {
     
             String payload;
             serializeJson(response, payload);
-            mqttClient.publish((String(mqttPrefix) + "/config/update").c_str(), 1, true, payload.c_str());
+            mqttClient.publish("module/config/update", 1, true, payload.c_str());
     
             Serial.println("✅ Published generic module config");
         }
@@ -592,7 +592,7 @@ namespace SmartCore_MQTT {
             char buffer[512];
             size_t len = serializeJson(doc, buffer);
 
-            mqttClient.publish((String(mqttPrefix) + "/metrics").c_str(), 0, false, buffer, len);
+            mqttClient.publish("module/metrics", 0, false, buffer, len);
             logMessage(LOG_INFO, "📤 Metrics sent → " + String(buffer));
 
             vTaskDelay(10000 / portTICK_PERIOD_MS);  // 10s loop
