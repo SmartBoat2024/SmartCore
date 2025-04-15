@@ -194,32 +194,31 @@ namespace SmartCore_MQTT {
         String message = String(safePayload);
         Serial.printf("📨 MQTT Message on [%s]: %s\n", topic, message.c_str());
     
-        // ✅ Use dynamic mqttPrefix instead of hardcoded "stc/"
+        // 🔄 Use full topic string directly (no mqttPrefix check)
         String topicStr = String(topic);
-        String expectedPrefix = String(mqttPrefix) + "/" + serialNumber + "/";
     
-        if (!topicStr.startsWith(expectedPrefix)) {
-            //Serial.println("⚠️ Received message for a different serial number. Ignoring.");
-            return;
-        }
+        // 🔍 Check for expected topic like: rel80003/config
+        String expectedConfigTopic = String(serialNumber) + "/config";
+        String expectedErrorsTopic = String(serialNumber) + "/errors";
+        String expectedModuleTopic = String(serialNumber) + "/module";
+        String expectedResetTopic  = String(serialNumber) + "/reset";
+        String expectedUpgradeTopic = String(serialNumber) + "/upgrade";
+        String expectedUpdateTopic = String(serialNumber) + "/update";
     
-        String subTopic = topicStr.substring(expectedPrefix.length());
-        
-        // Dispatch to appropriate handler
-        if (subTopic == "config") {
+        if (topicStr == expectedConfigTopic) {
             handleConfigMessage(message);
-        } else if (subTopic == "errors") {
+        } else if (topicStr == expectedErrorsTopic) {
             handleErrorMessage(message);
-        } else if (subTopic == "module") {
+        } else if (topicStr == expectedModuleTopic) {
             handleModuleMessage(message);
-        } else if (subTopic == "reset") {
+        } else if (topicStr == expectedResetTopic) {
             handleResetMessage(message);
-        } else if (subTopic == "upgrade") {
+        } else if (topicStr == expectedUpgradeTopic) {
             handleUpgradeMessage(message);
-        } else if (subTopic == "update") {
+        } else if (topicStr == expectedUpdateTopic) {
             handleUpdateMessage(message);
         } else {
-            Serial.printf("❓ Unknown subtopic: %s\n", subTopic.c_str());
+            Serial.printf("❓ Unknown subtopic on [%s]\n", topicStr.c_str());
         }
     }
 
