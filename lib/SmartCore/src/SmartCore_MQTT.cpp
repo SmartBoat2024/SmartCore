@@ -50,6 +50,9 @@ namespace SmartCore_MQTT {
         mqttClient.onDisconnect(onMqttDisconnect);
         mqttClient.onMessage(onMqttMessage);
         mqttClient.setKeepAlive(15);
+        String clientId = WiFi.macAddress();
+        clientId.replace(":", "");  // optional: clean format (e.g., AABBCCDDEEFF)
+        mqttClient.setClientId(clientId.c_str());
     
         // Configure Will
         mqttClient.setWill(mqttWillTopic, 1, true, serialNumber, strlen(serialNumber));
@@ -313,9 +316,13 @@ namespace SmartCore_MQTT {
             if (settingsChanged) {
                 Serial.println("💾 Generic config updated and saved.");
             }
-    
             // Send back updated config
             handleConfigMessage("{\"type\":\"getConfig\"}");
+        }
+
+        // ✅ Route all types (including setModuleConfig) to module-specific handler
+        if (type == "getConfig" || type == "setConfig" || type == "setModuleConfig") {
+            handleModuleSpecificConfig(message);
         }
     
         else {
@@ -326,12 +333,12 @@ namespace SmartCore_MQTT {
 
     void handleModuleMessage(const String& message){
         Serial.println("message arrived for module");
-        handleModuleSpecificModule();
+        handleModuleSpecificModule(message);
     }
 
     void handleErrorMessage(const String& message){
         Serial.println("message arrived for errors");
-        handleModuleSpecificErrors();
+        handleModuleSpecificErrors(message);
     }
 
     void handleResetMessage(const String& message) {
@@ -527,11 +534,13 @@ namespace SmartCore_MQTT {
 
     void scheduleReconnect() {
         static unsigned long lastAttempt = 0;
-        static unsigned long retryInterval = 5000;
-    
         unsigned long now = millis();
-       
-        
+    
+        if (now - lastAttempt > 5000) {
+            lastAttempt = now;
+            logMessage(LOG_INFO, "🔁 Attempting MQTT reconnect...");
+            mqttClient.connect();
+        }
     }
     
     void mqttReconnectTask(void *param) {

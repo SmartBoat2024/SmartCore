@@ -5,6 +5,7 @@
 #include "SmartCore_Log.h"
 #include "config.h"
 #include <SmartConnect_Async_WiFiManager.h>
+#include "module_reset.h"
 
 namespace SmartCore_EEPROM {
 
@@ -275,10 +276,6 @@ void resetParameters() {
 
     // --- Call user-defined overrides (if provided)
     resetModuleSpecificParameters();
-}
-
-void __attribute__((weak)) resetModuleSpecificParameters() {
-    logMessage(LOG_INFO, "🧩 No module-specific reset logic provided.");
 }
 
 } // namespace

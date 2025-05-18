@@ -21,6 +21,7 @@
 #include "SmartCore_MCP.h"
 #include "SmartCore_OTA.h"
 #include "config.h"
+#include "module_reset.h"
 
 
 namespace SmartCore_System {
@@ -191,10 +192,6 @@ namespace SmartCore_System {
         //xTaskCreatePinnedToCore(smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &smartNetTaskHandle, 1);
     }
 
-    void __attribute__((weak)) getModuleSpecificConfig() {
-        logMessage(LOG_WARN, "⚠️ Warning: getModuleSpecificConfig() not overridden in project.");
-        // Default empty implementation
-    }
 
     void checkresetButtonTask(void *parameter) {
         for (;;) {
@@ -227,28 +224,44 @@ namespace SmartCore_System {
     }
 
     void resetWorkerTask(void *param) {
-        SmartCore_EEPROM::resetParameters();  // ⚙️ Clean config wipe
-    
         Serial.println("🧹 Suspending other tasks...");
         TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
     
-        if (SmartCore_OTA::otaTaskHandle && SmartCore_OTA::otaTaskHandle != currentTask)   vTaskSuspend(SmartCore_OTA::otaTaskHandle);
-        if (wifiMqttCheckTaskHandle && wifiMqttCheckTaskHandle != currentTask) vTaskSuspend(wifiMqttCheckTaskHandle);
-        if (SmartCore_MQTT::metricsTaskHandle && SmartCore_MQTT::metricsTaskHandle != currentTask) vTaskSuspend(SmartCore_MQTT::metricsTaskHandle);
-        if (SmartCore_MQTT::timeSyncTaskHandle && SmartCore_MQTT::timeSyncTaskHandle != currentTask) vTaskSuspend(SmartCore_MQTT::timeSyncTaskHandle);
-        if (flashLEDTaskHandle && flashLEDTaskHandle != currentTask)           vTaskSuspend(flashLEDTaskHandle);
-        if (provisioningBlinkTaskHandle && provisioningBlinkTaskHandle != currentTask) vTaskSuspend(provisioningBlinkTaskHandle);
-        if (SmartCore_WiFi::wifiManagerTaskHandle && SmartCore_WiFi::wifiManagerTaskHandle != currentTask) vTaskSuspend(SmartCore_WiFi::wifiManagerTaskHandle);
-        if (SmartCore_SmartNet::smartNetTaskHandle && SmartCore_SmartNet::smartNetTaskHandle != currentTask)           vTaskSuspend(SmartCore_SmartNet::smartNetTaskHandle);
-        // TODO: re-enable SmartNet suspend if needed
+        struct TaskEntry {
+            const char* name;
+            TaskHandle_t handle;
+        };
     
-        Serial.println("✅ All tasks suspended.");
-        setRGBColor(0, 255, 0);  // 🟢 Visual feedback
+        TaskEntry tasks[] = {
+            { "metricsTaskHandle", SmartCore_MQTT::metricsTaskHandle },
+            { "timeSyncTaskHandle", SmartCore_MQTT::timeSyncTaskHandle },
+            { "flashLEDTaskHandle", flashLEDTaskHandle },
+            //{ "provisioningBlinkTaskHandle", provisioningBlinkTaskHandle }
+            // Exclude OTA / WiFi tasks that could crash during suspend
+        };
     
-        vTaskDelay(pdMS_TO_TICKS(250));  // Let things settle
+        for (const auto& task : tasks) {
+            Serial.printf("[DEBUG] Suspending: %s (%p)...\n", task.name, task.handle);
+            if (task.handle && task.handle != currentTask) {
+                vTaskSuspend(task.handle);
+                Serial.printf("   ✅ %s suspended\n", task.name);
+            }
+        }
+    
+        // ✅ Module-specific suspends (if any)
+        suspendModuleTasksDuringReset();
+    
+        Serial.println("✅ All safe tasks suspended.");
+    
+        // 🔧 Now it's safe to reset parameters
+        SmartCore_EEPROM::resetParameters();
+    
+        setRGBColor(0, 255, 0);  // 🟢 Feedback
+        vTaskDelay(pdMS_TO_TICKS(200));
+    
         Serial.println("♻️ Restarting...");
-        esp_restart();  // 💥 Full restart
-    }
+        esp_restart();
+    } 
 
     void clearCrashCounter(CrashCounterType type) {
         bool changed = false;

@@ -11,3 +11,5 @@
 
 #define SMARTBOAT_HW_VERSION 3  //module pcb board revision
 #define APIKEY "85731a76-840c-4d3b-b4d3-51cc58183643"
+
+extern void getModuleSpecificConfig();

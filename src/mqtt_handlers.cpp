@@ -2,17 +2,17 @@
 #include <Arduino.h>
 #include "SmartCore_MQTT.h"
 
-void handleModuleSpecificConfig() {
+void handleModuleSpecificConfig(const String& message) {
     Serial.println("📦 [Template] handleModuleSpecificConfig() called.");
     // TODO: Add configuration-specific logic here
 }
 
-void handleModuleSpecificModule() {
+void handleModuleSpecificModule(const String& message) {
     Serial.println("📦 [Template] handleModuleSpecificModule() called.");
     // TODO: Add module-specific handling here
 }
 
-void handleModuleSpecificErrors() {
+void handleModuleSpecificErrors(const String& message) {
     Serial.println("📦 [Template] handleModuleSpecificErrors() called.");
     // TODO: Add error-specific logic here
 }
