@@ -7,482 +7,237 @@
 #include "SmartCore_Network.h"
 #include "esp_task_wdt.h"
 #include "SmartCore_System.h"
-#include "SmartCore_Webserver.h"
-#include <SmartConnect_Async_WiFiManager.h>
-#include "SmartCore_Webserver.h"
 #include <ESPmDNS.h>
+#include <ArduinoJson.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
 
 namespace SmartCore_WiFi {
 
-    TaskHandle_t wifiManagerTaskHandle = NULL;
+    TaskHandle_t wifiProvisionTaskHandle = NULL;
 
     static char apName[32];
     static char apPassword[32];
 
     // Local state (TODO: move globals to a struct if needed)
-    AsyncWebServer server(80);
-    static AsyncDNSServer* dns = nullptr;
-    static ESPAsync_WiFiManager* wifiManager = nullptr;
+    AsyncWebServer server(5000);
+
 
     // Public entry point
-    void startWiFiManagerTask() {
-        xTaskCreatePinnedToCore(wifiManagerTask,        "WiFiManager Task",    8192, NULL, 1, &wifiManagerTaskHandle,        1);
+    void startWiFiProvisionTask() {
+        xTaskCreatePinnedToCore(wifiProvisionTask, "WiFiManager Task", 8192, NULL, 1, &wifiProvisionTaskHandle, 1);
     }
 
-    void wifiManagerTask(void *parameter) {
-        wifiManagerStartTime = millis();
-        logMessage(LOG_INFO, "📡 Starting WiFiManager Task...");
-    
-        //resetConfig = true; //for testing only
-        resetConfig = SmartCore_EEPROM::readResetConfigFlag();                          
-        smartConnectEnabled = SmartCore_EEPROM::readBoolFromEEPROM(SC_BOOL_ADDR);      
-        standaloneMode =  SmartCore_EEPROM::readBoolFromEEPROM(STANDALONE_MODE_ADDR);    
-        wifiSetupComplete =  SmartCore_EEPROM::readBoolFromEEPROM(WIFI_SETUP_COMPLETE_ADDR);
-        currentLEDMode = LEDMODE_STATUS;
-    
-        // 🔍 Diagnostic Summary
-        logMessage(LOG_INFO, "🔍 WiFi Setup Summary:");
-        logMessage(LOG_INFO, "  📂 resetConfig         : " + String(resetConfig ? "true" : "false"));
-        logMessage(LOG_INFO, "  📡 smartConnectEnabled : " + String(smartConnectEnabled ? "true" : "false"));
-        logMessage(LOG_INFO, "  🛠️  standaloneMode      : " + String(standaloneMode ? "true" : "false"));
-        logMessage(LOG_INFO, "  🔐 wifiSetupComplete   : " + String(wifiSetupComplete ? "true" : "false"));
-    
+    void wifiProvisionTask(void* parameter) {
+        logMessage(LOG_INFO, "📡 Starting WiFi Provisioning Task...");
+
+        // Flags
+        resetConfig = SmartCore_EEPROM::readResetConfigFlag();
+        wifiSetupComplete = SmartCore_EEPROM::readBoolFromEEPROM(WIFI_SETUP_COMPLETE_ADDR);
+
+        // Load WiFi fail counter
+        uint8_t wifiFailCounter = EEPROM.read(WIFI_FAIL_COUNTER_ADDR);
+
+        // ---- RESET CONFIG: Force AP for Provisioning ----
         if (resetConfig) {
-            //SmartCore_EEPROM::resetParameters();
-            logMessage(LOG_INFO, "🔁 resetConfig = true → Forcing WiFiManager portal...");
-            currentLEDMode = LEDMODE_WAITING;
-            currentProvisioningState = PROVISIONING_PORTAL;
-            setupWiFiManager();  // Will restart on completion
-        } else {
-            SmartCore_System::getModuleConfig();  // Load flags: resetConfig, smartConnectEnabled, etc.
-    
-            if (smartConnectEnabled && !wifiSetupComplete) {
-                logMessage(LOG_INFO, "🚀 SmartConnect awaiting credentials...");
-                currentLEDMode = LEDMODE_WAITING;
-                currentProvisioningState = PROVISIONING_SMARTCONNECT;
-    
-                String apSSID = "SB_Internal_" + String(serialNumber);
-                WiFi.mode(WIFI_AP);
-                WiFi.softAP(apSSID.c_str(), "12345678");
-    
-                unsigned long apWaitStart = millis();
-                IPAddress apIP;
-    
-                do {
-                    apIP = WiFi.softAPIP();
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                } while ((apIP.toString() == "0.0.0.0") && millis() - apWaitStart < 3000);
-    
-                logMessage(LOG_INFO, "🔗 SoftAP IP: " + String(apIP));
-
-    
-                server.on("/provision", HTTP_POST, [](AsyncWebServerRequest *request) {
-                    String ssid = request->arg("ssid");
-                    String pass = request->arg("pass");
-                
-                    logMessage(LOG_INFO, "📥 Received creds:");
-                    logMessage(LOG_INFO, "  📶 SSID : " + String(ssid));
-                    logMessage(LOG_INFO, "  🔐 PASS : " + String(pass));
-                    SmartCore_EEPROM::writeStringToEEPROM(WIFI_SSID_ADDR, ssid);
-                    SmartCore_EEPROM::writeStringToEEPROM(WIFI_PASS_ADDR, pass);
-                    wifiSetupComplete = true;
-                    SmartCore_EEPROM::writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, true);
-                    provisioningComplete = true;
-                
-                    logMessage(LOG_INFO, "💾 EEPROM Values After Write:");
-                    logMessage(LOG_INFO, "  ✅ WIFI_SSID_ADDR       : " + SmartCore_EEPROM::readStringFromEEPROM(WIFI_SSID_ADDR, 40));
-                    logMessage(LOG_INFO, "  ✅ WIFI_PASS_ADDR       : " + SmartCore_EEPROM::readStringFromEEPROM(WIFI_PASS_ADDR, 40));
-                    logMessage(LOG_INFO, "  ✅ WIFI_SETUP_COMPLETE  : " + String(SmartCore_EEPROM::readBoolFromEEPROM(WIFI_SETUP_COMPLETE_ADDR) ? "true" : "false"));
-                
-                    // ✅ Send response now
-                    request->send(200, "text/plain", "✅ Credentials received. Rebooting...");
-                
-                    // ✅ Reboot only *after* client disconnects (SmartBox got response)
-                    request->onDisconnect([]() {
-                        logMessage(LOG_INFO, "🔌 SmartBox disconnected after provisioning. Rebooting...");
-                        vTaskDelay(pdMS_TO_TICKS(100)); // small safety delay
-                        ESP.restart();
-                    });
-                });
-    
-                server.begin();
-    
-                unsigned long start = millis();
-                while (!provisioningComplete && millis() - start < 50000) {
-                    vTaskDelay(pdMS_TO_TICKS(100));  // ✅ yields during wait
-                }
-    
-                if (provisioningComplete) {
-                    logMessage(LOG_INFO, "⏳ Provisioning completed, skipping timeout fallback...");
-                
-                    server.end();                 // 🔒 Cleanly shut down the server
-                    WiFi.softAPdisconnect(true);  // 📡 Kill SoftAP before reboot
-                
-                    vTaskDelete(NULL);            // ✅ End task cleanly (or use return;)
-                } else {
-                    logMessage(LOG_INFO, "⌛ SmartConnect timeout. Falling back...");
-                    smartConnectEnabled = false;
-                    resetConfig = true;
-                    SmartCore_EEPROM::writeBoolToEEPROM(SC_BOOL_ADDR, false);
-                    SmartCore_EEPROM::writeResetConfigFlag(true);
-    
-                    WiFi.softAPdisconnect(true);  // Disconnect SoftAP mode
-                    delay(100);                   // Let SoftAP disconnect
-                    WiFi.mode(WIFI_OFF);          // Turn off Wi-Fi mode completely
-                    delay(100);  
-                    ESP.restart();
-                }
-    
-                
-            }
-            else if (smartConnectEnabled && wifiSetupComplete) {
-                logMessage(LOG_INFO, "📶 Connecting with SmartBox-provided creds...");
-    
-                String ssid = SmartCore_EEPROM::readStringFromEEPROM(WIFI_SSID_ADDR, 40);
-                String pass = SmartCore_EEPROM::readStringFromEEPROM(WIFI_PASS_ADDR, 40);
-                WiFi.begin(ssid.c_str(), pass.c_str());
-    
-                unsigned long start = millis();
-                while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-                    vTaskDelay(pdMS_TO_TICKS(100));  // ✅ fix: was checking provisioningComplete
-                }
-    
-                if (WiFi.status() == WL_CONNECTED) {
-                    logMessage(LOG_INFO, "✅ Connected with SmartConnect creds");
-                    currentLEDMode = LEDMODE_STATUS;
-                    startNetworkServices(true);
-                } else {
-                    logMessage(LOG_INFO, "❌ Failed SmartConnect. Fallback to WiFiManager...");
-                    smartConnectEnabled = false;
-                    resetConfig = true;
-                    SmartCore_EEPROM::writeBoolToEEPROM(SC_BOOL_ADDR, false);
-                    SmartCore_EEPROM::writeResetConfigFlag(true);
-                    ESP.restart();
-                }
-            }
-            else if (standaloneMode) {
-                logMessage(LOG_INFO, "📡 Standalone mode active → Starting SoftAP");
-                currentLEDMode = LEDMODE_STATUS;
-    
-                WiFi.mode(WIFI_AP);
-                WiFi.softAP(apName, apPassword);
-                startNetworkServices(false);  // No MQTT in standalone
-            }
-            else if (wifiSetupComplete) {
-                logMessage(LOG_INFO, "🔍 Attempting WiFi autoConnect...");
-
-                if (dns) {
-                    logMessage(LOG_WARN, "♻️ Deleting old dns instance before reallocation...");
-                    delete dns;
-                    dns = nullptr;
-                }
-                
-                if (wifiManager) {
-                    logMessage(LOG_WARN, "♻️ Deleting old wifiManager instance...");
-                    delete wifiManager;
-                    wifiManager = nullptr;
-                }
-                
-                // Create new DNS and WiFiManager cleanly
-                logMessage(LOG_INFO, "🛠️ Creating new AsyncDNSServer...");
-                dns = new AsyncDNSServer();
-                
-                logMessage(LOG_INFO, "🛠️ Creating new WiFiManager...");
-                wifiManager = new ESPAsync_WiFiManager(&server, dns);
-                
-                bool res = wifiManager->autoConnect("SmartController");
-                vTaskDelay(pdMS_TO_TICKS(100));  // Let system breathe
-    
-                if (!res) {
-                    setupWiFiManager();  // fallback portal
-                    return;
-                } else {
-                    logMessage(LOG_INFO, "✅ WiFiManager autoConnect success.");
-                    currentLEDMode = LEDMODE_STATUS;
-                    startNetworkServices(true);
-                }
-            }
-            else {
-                logMessage(LOG_INFO, "🔍 Default: WiFiManager autoConnect attempt...");
-                currentLEDMode = LEDMODE_WAITING;
-                currentProvisioningState = PROVISIONING_PORTAL;
-                setupWiFiManager();
-                return;
-            }
-        }
-    
-        wifiManagerFinished = true;
-        logMessage(LOG_INFO, "✅ WiFiManager task complete.");
-        currentLEDMode = LEDMODE_STATUS;
-        vTaskDelay(pdMS_TO_TICKS(100));
-        vTaskDelete(NULL);
-
-        // ✅ At the end:
-        vTaskDelete(NULL);
-    }
-
-    void setupWiFiManager() {
-        logMessage(LOG_INFO, "📶 setupWiFiManager() called");
-        static bool wifiManagerInitialized = false;
-    
-        currentLEDMode = LEDMODE_WAITING;
-        currentProvisioningState = PROVISIONING_PORTAL;
-    
-        // Use safer constructor without DNS
-        dns = new AsyncDNSServer();
-        wifiManager = new ESPAsync_WiFiManager(&server, dns, "SmartConnect");
-    
-        logMessage(LOG_INFO, "🔁 [DEBUG] resetConfig: " + String(resetConfig));
-    
-        if (resetConfig) {
-            // Generate random 4-digit number as suffix
-            uint16_t randSuffix = random(1000, 9999);  // Make sure randomSeed() was called earlier
-    
-            // Generate AP name with suffix
-            snprintf(apName, sizeof(apName), "SmartConnect_%s_%04d", serialNumber, randSuffix);
-            strncpy(apPassword, "12345678", sizeof(apPassword) - 1);
-            apPassword[sizeof(apPassword) - 1] = '\0';
-    
             SmartCore_EEPROM::resetParameters();
-    
-            logMessage(LOG_INFO, "⛔ Erasing WiFi stack and credentials...");
-            WiFi.disconnect(true, true);
-            delay(100);
-            WiFi.mode(WIFI_OFF);
-            delay(100);
-    
-            logMessage(LOG_INFO, "🧹 Resetting WiFiManager settings...");
-            wifiManager->resetSettings();
-            delay(100);
-    
-            // Recreate WiFiManager (DNS not used anymore)
-            delete wifiManager;
-            dns = new AsyncDNSServer();
-            wifiManager = new ESPAsync_WiFiManager(&server, dns, "SmartCtrl");
-        } else {
+            logMessage(LOG_INFO, "🔁 resetConfig = true → Starting provisioning AP...");
+
+            // Unique AP SSID: <prefix>_<MAC>
+            uint8_t mac[6];
+            WiFi.softAPmacAddress(mac);
+            char macSuffix[7];
+            sprintf(macSuffix, "%02X%02X%02X", mac[3], mac[4], mac[5]);
+            String apSsid = String(SmartCore_System::getModuleSettings().apSSID) + "_" + String(macSuffix);
+
+            WiFi.mode(WIFI_AP);
+            WiFi.softAP(apSsid.c_str(), nullptr);
+
+            logMessage(LOG_INFO, "🔊 Provisioning AP started. SSID: " + apSsid);
+
+            setLEDMode(LEDMODE_WAITING);
+            currentProvisioningState = PROVISIONING_PORTAL;
+
+            // HTTP POST /setup endpoint (as in earlier examples)
+            server.on("/setup", HTTP_POST, [](AsyncWebServerRequest *request){},
+            NULL,
+            [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+                String body = "";
+                for (size_t i = 0; i < len; ++i) body += (char)data[i];
+                Serial.println("Received setup POST:");
+                Serial.println(body);
+
+                DynamicJsonDocument doc(512);
+                DeserializationError err = deserializeJson(doc, body);
+                if (err) {
+                request->send(400, "application/json", "{\"status\":\"fail\",\"msg\":\"Bad JSON\"}");
+                return;
+                }
+                String ssid = doc["ssid"] | "";
+                String pass = doc["password"] | "";
+                String mqttIp = doc["mqttIp"] | "";
+                String mqttPort = doc["mqttPort"] | "";
+                String serial = doc["serialNumber"] | "";
+
+                logMessage(LOG_INFO, "📥 Received WiFi/MQTT creds via provisioning:");
+                logMessage(LOG_INFO, "  📶 SSID: " + ssid);
+                logMessage(LOG_INFO, "  🔐 PASS: " + pass);
+                logMessage(LOG_INFO, "  🟦 MQTT: " + mqttIp + ":" + mqttPort);
+                logMessage(LOG_INFO, "  #️⃣ Serial: " + serial);
+
+                SmartCore_EEPROM::writeStringToEEPROM(WIFI_SSID_ADDR, ssid, 41);
+                SmartCore_EEPROM::writeStringToEEPROM(WIFI_PASS_ADDR, pass, 41);
+                SmartCore_EEPROM::writeStringToEEPROM(MQTT_IP_ADDR, mqttIp, 17);
+                SmartCore_EEPROM::writeStringToEEPROM(MQTT_PORT_ADDR, mqttPort, 7);
+                SmartCore_EEPROM::writeStringToEEPROM(SN_ADDR, serial, 41);
+                SmartCore_EEPROM::writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, true);
+
+                // Reset WiFi fail counter after successful provisioning
+                EEPROM.write(WIFI_FAIL_COUNTER_ADDR, 0);
+                EEPROM.commit();
+
+                resetConfig = false;
+                SmartCore_EEPROM::writeResetConfigFlag(false);
+
+                logMessage(LOG_INFO, "💾 WiFi/MQTT creds saved to EEPROM. Rebooting...");
+
+                setLEDMode(LEDMODE_STATUS); 
+
+                vTaskDelay(pdMS_TO_TICKS(250));
+
+                request->send(200, "application/json", "{\"status\":\"success\",\"msg\":\"Provisioned. Rebooting.\"}");
+                Serial.println("Provisioning response sent!");
+
+                // Reboot after response sent
+                request->onDisconnect([]() {
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    ESP.restart();
+                });
+            });
+            server.begin();
+
+            // Block forever (will reboot on provisioning)
+            while (true) vTaskDelay(pdMS_TO_TICKS(200));
+        }
+
+        // ---- NORMAL BOOT: Try STA, Retry, Safe Mode if Needed ----
+        if (wifiSetupComplete) {
             SmartCore_System::getModuleConfig();
-        }
-    
-        // Standard dual-mode
-        WiFi.softAPdisconnect(true);
-        delay(100);
-        WiFi.mode(WIFI_AP_STA);
-        delay(100);
-    
-        wifiManager->setConnectTimeout(20);
-        wifiManager->setConfigPortalTimeout(180);
-        wifiManager->setDebugOutput(true);
+            String ssid = SmartCore_EEPROM::readStringFromEEPROM(WIFI_SSID_ADDR, 41);
+            String pass = SmartCore_EEPROM::readStringFromEEPROM(WIFI_PASS_ADDR, 41);
+            String mqttIp = SmartCore_EEPROM::readStringFromEEPROM(MQTT_IP_ADDR, 17);
+            String mqttPort = SmartCore_EEPROM::readStringFromEEPROM(MQTT_PORT_ADDR, 7);
+            String serial = SmartCore_EEPROM::readStringFromEEPROM(SN_ADDR, 41);
 
-        //Update custom_serial to the generic module serial number before starting portal
-        custom_serial = new ESPAsync_WMParameter("serialNumber", "Please Enter Serial Number", serialNumber, 40);
-        custom_webname = new ESPAsync_WMParameter("CustomWebName", "Please Enter a Custom Webname", webnamechar, 40);
+            logMessage(LOG_INFO, "🔍 [POST-READ] EEPROM DEBUG:");
+            logMessage(LOG_INFO, "  📶 SSID: " + ssid);
+            logMessage(LOG_INFO, "  🔐 PASS: " + pass);
+            logMessage(LOG_INFO, "  🟦 MQTT: " + mqttIp + ":" + mqttPort);
+            logMessage(LOG_INFO, "  #️⃣ Serial: " + serial);
 
-    
-        if (!wifiManagerInitialized) {
-            wifiManager->addParameter(custom_serial);
-            wifiManager->addParameter(custom_webname);
-            wifiManagerInitialized = true;
-        }
-    
-        bool res = false;
-    
-        // 🔥 Disable WDT for this task
-        esp_task_wdt_delete(NULL);
-    
-        if (resetConfig) {
-            logMessage(LOG_INFO, "🚪 Forcing config portal (resetConfig = true)...");
-            res = wifiManager->startConfigPortal(apName);
-        } else {
-            logMessage(LOG_INFO, "🔍 Attempting WiFi autoConnect...");
-            res = wifiManager->autoConnect("SmartCtroller");
-    
-            if (!res) {
-                logMessage(LOG_INFO, "⚠️ autoConnect failed. Launching config portal...");
-                res = wifiManager->startConfigPortal(apName);
-            } else {
-                logMessage(LOG_INFO, "✅ WiFiManager autoConnect success.");
+            WiFi.mode(WIFI_STA);
+
+            int retry = 0;
+            bool connected = false;
+            unsigned long backoffMs = WIFI_RETRY_START_MS;
+
+            while (retry < WIFI_RETRY_LIMIT && !connected) {
+                WiFi.disconnect();
+                WiFi.begin(ssid.c_str(), pass.c_str());
+                unsigned long start = millis();
+                while (WiFi.status() != WL_CONNECTED && millis() - start < backoffMs) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                }
+                if (WiFi.status() == WL_CONNECTED) {
+                    connected = true;
+                    // Reset WiFi fail counter on successful connect
+                    EEPROM.write(WIFI_FAIL_COUNTER_ADDR, 0);
+                    EEPROM.commit();
+                    break;
+                } else {
+                    logMessage(LOG_WARN, "❌ WiFi connect attempt failed, retrying...");
+                    retry++;
+                    backoffMs *= 2; // Exponential backoff
+                }
+            }
+
+            if (connected) {
+                logMessage(LOG_INFO, "✅ Connected as WiFi client.");
                 setLEDMode(LEDMODE_STATUS);
                 startNetworkServices(true);
-            }
-        }
-    
-        // ✅ Re-enable WDT now that blocking operation is done
-        esp_task_wdt_add(NULL);
-    
-        // Final connection check
-        if (WiFi.status() == WL_CONNECTED) {
-            logMessage(LOG_INFO, "✅ WiFi connected via WiFiManager.");
-            setLEDMode(LEDMODE_STATUS);
-    
-            if (resetConfig && !smartConnectEnabled) {
-                
-                saveConfigAndRestart();
+            } else {
+                // Increment and store WiFi fail counter
+                wifiFailCounter++;
+                EEPROM.write(WIFI_FAIL_COUNTER_ADDR, wifiFailCounter);
+                EEPROM.commit();
+
+                if (wifiFailCounter >= WIFI_FAIL_LIMIT_SAFE) {
+                    logMessage(LOG_ERROR, "🚨 Too many WiFi boot fails! Entering Safe Mode for recovery.");
+                    SmartCore_System::enterSafeMode();  // Reuse your robust Safe Mode recovery UI/task
+                } else {
+                    logMessage(LOG_WARN, "🔄 Will retry WiFi on next boot (fail count: " + String(wifiFailCounter) + ")");
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    ESP.restart();
+                }
             }
         } else {
-            logMessage(LOG_INFO, "❌ WiFi failed. Calling handleFailedConnection()...");
-            setLEDMode(LEDMODE_STATUS);
-            handleFailedConnection();
+            // This case: Not resetConfig, but no setup complete (shouldn’t usually occur)
+            logMessage(LOG_WARN, "⚠️ Not provisioned and not in reset state — falling back to AP for provisioning.");
+            resetConfig = true;
+            SmartCore_EEPROM::writeResetConfigFlag(true);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            ESP.restart();
         }
+
+        vTaskDelete(NULL);
     }
     
     void handleFailedConnection() {
         logMessage(LOG_INFO, "🚨 handleFailedConnection() triggered.");
-    
-        if (standaloneFlag || standaloneMode) {
-            SmartCore_EEPROM::writeStandaloneModeToEEPROM(true);
-            saveConfigAndRestart();  // This resets flags and restarts
-        } else {
-            logMessage(LOG_INFO, "⚠️ WiFi credentials likely invalid — flashing error pattern...");
-            triggerFlashPattern(".....", DEBUG_COLOR_RED);  // Five short red blinks
-    
-            vTaskDelay(pdMS_TO_TICKS(3000));  // Allow partial flashing before restart
-            ESP.restart();  // Or use resetModule() if cleanup is needed
-        }
-    }
+        logMessage(LOG_INFO, "⚠️ WiFi credentials likely invalid — flashing error pattern...");
+        triggerFlashPattern(".....", DEBUG_COLOR_RED);  // Five short red blinks
 
-    void saveConfigAndRestart() {
-        logMessage(LOG_INFO, "Saving configuration and restarting...");
-        logMessage(LOG_INFO, String("🧠 autoProvisioned = ") + (autoProvisioned ? "true" : "false"));
-        if (!autoProvisioned){
-                // Serial Number
-            const char* serialFromForm = custom_serial->getValue();
-            if (serialFromForm && strlen(serialFromForm) > 0) {
-                strncpy(serialNumber, serialFromForm, sizeof(serialNumber) - 1);
-                serialNumber[sizeof(serialNumber) - 1] = '\0';
-                SmartCore_EEPROM::writeSerialNumberToEEPROM();
-                serialNumberAssigned = true;
-                SmartCore_EEPROM::writeSerialNumberAssignedFlag(true);
-            } else {
-                logMessage(LOG_WARN, "⚠️ custom_serial was null or empty.");
-                serialNumberAssigned = false;
-                SmartCore_EEPROM::writeSerialNumberAssignedFlag(false);
-            }
-
-            // Webname
-            if(!smartConnectEnabled){
-                const char* webnameFromForm = custom_webname->getValue();
-                if (webnameFromForm && strlen(webnameFromForm) > 0) {
-                    strncpy(webnamechar, webnameFromForm, sizeof(webnamechar) - 1);
-                    webnamechar[sizeof(webnamechar) - 1] = '\0';
-                    webname = String(webnamechar);
-                    SmartCore_EEPROM::writeCustomWebnameToEEPROM();
-    
-                    logMessage(LOG_INFO, "✅ [WiFiManager] Saved Custom Webname: " + webname);
-                } else {
-                    logMessage(LOG_WARN, "⚠️ custom_webname was null or empty.");
-                }
-            }
-           
-        } else {
-            logMessage(LOG_INFO, "📦 Skipping custom_serial and webname — auto SmartConnect mode.");
-        }
-    
-        // Save AP Name and Password
-       /* strncpy(apName, custom_ap_name.getValue(), sizeof(apName) - 1);
-        apName[sizeof(apName) - 1] = '\0';
-        writeStringToEEPROM(CUSTOM_AP_NAME_ADDR, apName);
-    
-        strncpy(apPassword, custom_ap_pass.getValue(), sizeof(apPassword) - 1);
-        apPassword[sizeof(apPassword) - 1] = '\0';
-        writeStringToEEPROM(CUSTOM_AP_PASS_ADDR, apPassword);*/
-    
-        wifiSetupComplete = true;
-        SmartCore_EEPROM::writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, true);
-    
-        // Save webname to EEPROM
-        webname = String(webnamechar);
-        SmartCore_EEPROM::writeStringToEEPROM(WEBNAME_ADDR, webname);
-    
-        // Reset Config and Flag if needed
-        logMessage(LOG_INFO, "Set Reset Config to false");
-        resetConfig = false;
-        SmartCore_EEPROM::writeResetConfigFlag(false);  // Ensure resetConfig is saved as false
-    
-        logMessage(LOG_INFO, "Configuration saved. Restarting now...");
-        delay(1000);  // Give some time to finish serial output
-        ESP.restart();  // Restart the ESP32 to apply new settings
+        vTaskDelay(pdMS_TO_TICKS(3000));  // Allow partial flashing before restart
+        ESP.restart();  // Or use resetModule() if cleanup is needed
+        
     }
 
     void startNetworkServices(bool mqttRequired = true) {
         logMessage(LOG_INFO, "🌐 Starting Network Services...");
-        
-        #ifdef WEBSERVER_ENABLED
-        logMessage(LOG_INFO, "🖥️  Web server enabled — starting...");
-        // Always sync webname from char
-        webname = String(webnamechar);
-    
-        SmartCore_Websocket::setupMDNS();
-        SmartCore_Websocket::setupWebServer();
-        #endif
-        
-        smartBoatEnabled = true;  //for testing
+        waitForValidIP(); // Wait for DHCP/IP ready
+        vTaskDelay(pdMS_TO_TICKS(200)); // Small extra buffer
 
         if (mqttRequired) {
-            if (smartBoatEnabled || customMqtt) {
-                Serial.println("📡 MQTT enabled — configuring...");
-                SmartCore_MQTT::setupMQTTClient();
-            } else {
-                Serial.println("ℹ️ MQTT not enabled (SmartBoat and Custom MQTT both false)");
-            }
+            SmartCore_MQTT::setupMQTTClient();
         } else {
-            Serial.println("🚫 MQTT skipped (standalone mode or not required)");
+            Serial.println("🚫 MQTT skipped (not required)");
         }
-    
         SmartCore_System::createAppTasks();
-    
+    }
+
+    void waitForValidIP() {
+        int tries = 0;
+        while ((WiFi.localIP() == IPAddress(0,0,0,0)) && (tries++ < 20)) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 
     //SAFE CONNECT FOR RECOVERY
     void startMinimalWifiSetup() {
+        logMessage(LOG_INFO, "🛟 Safe Mode: Starting minimal AP for recovery.");
 
-        logMessage(LOG_INFO, "⛔ Erasing WiFi stack and credentials...");
         WiFi.disconnect(true, true);
         delay(100);
-        WiFi.mode(WIFI_OFF);
-        delay(100);
+        WiFi.mode(WIFI_AP);
+        String apSsid = String(SmartCore_System::getModuleSettings().apSSID) + "_RECOVERY";
+        WiFi.softAP(apSsid.c_str(), nullptr);
+        logMessage(LOG_INFO, "🛟 Safe Mode AP SSID: " + apSsid);
 
-        logMessage(LOG_INFO, "🧹 Resetting WiFiManager settings...");
-        if (wifiManager) {
-            wifiManager->resetSettings();
-            delete wifiManager;
-            wifiManager = nullptr;
-        }
+        static AsyncWebServer safeServer(81);
+        // [ ... add simple HTML UI/handlers for "Clear EEPROM", "Reboot", "OTA", etc ... ]
+        safeServer.begin();
 
-        if (dns) {
-            delete dns;
-            dns = nullptr;
-        }
-
-        dns = new AsyncDNSServer();
-        wifiManager = new ESPAsync_WiFiManager(&server, dns, "SmartCtrl");
-
-        // Dual-mode setup
-        WiFi.softAPdisconnect(true);
-        delay(100);
-        WiFi.mode(WIFI_AP_STA);
-        delay(100);
-
-        wifiManager->setConnectTimeout(20);
-        wifiManager->setConfigPortalTimeout(180);
-        wifiManager->setDebugOutput(true);
-
-        logMessage(LOG_INFO, "🔍 Attempting WiFi autoConnect...");
-        wifiManager->startConfigPortal("SmartSafeConnect");
-        
-        if (WiFi.status() == WL_CONNECTED) {
-            if (MDNS.begin("recovery")) {
-                logMessage(LOG_INFO, "✅ mDNS started");
-                MDNS.addService("http", "tcp", 81);
-            } else {
-                logMessage(LOG_WARN, "⚠️ Failed to start mDNS");
-            }
-        
-            logMessage(LOG_INFO, "✅ WiFi connected via WiFiManager.");
-        }
-
-        if (WiFi.status() == WL_CONNECTED) {
-            logMessage(LOG_INFO, "✅ WiFi connected via WiFiManager.");
-        }
+        while (true) delay(1000); // Loop forever
     }
 
 }

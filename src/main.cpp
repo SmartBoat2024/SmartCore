@@ -1,26 +1,32 @@
 #include <Arduino.h>
 #include "SmartCore_System.h"
+#include "SmartCore_Network.h"
 #include "SmartCore_Log.h"
 #include "SmartCore_LED.h"
 #include "SmartCore_I2C.h"
 #include "SmartCore_MCP.h"
 #include "config.h"
-#define ESPASYNC_WIFI_MANAGER_IMPLEMENTATION
-#include <SmartConnect_Async_WiFiManager.h>
 
 // Define the EEPROM size and the end of the SmartCore settings
 #define EEPROM_SIZE 1024
-#define SMARTCORE_EEPROM_END 400  // SmartCore settings end at address 200
-#define WebServerEnabled true  //determines if webservices should start
+#define SMARTCORE_EEPROM_END 300  // SmartCore settings end at address 200
 
 
 // ========================
 //  Module Settings
 // ========================
 
+// ==   prefix for ap start with ===
+// 'SB_relay': 'Smart Relay Module',
+//  'SB_stm': 'Smart Temp Monitor',
+//  'SB_stc': 'Smart Terminal Controller',
+//  'SB_sen': 'Smart Sensor Module',
+// =====================================
+
 SmartCoreSettings myModuleSettings = {
     .serialNumber = "rel8XXXX",
-    .moduleName = "Smart Relay Controller"
+    .moduleName = "Smart Relay Controller",
+    .apSSID = "SB_relay_XXXX"  // change to module specific ssid
 };
 
 //////////////////////////////////////////////////////////////
@@ -53,21 +59,6 @@ void loop() {
   // This loop runs continuously after setup()
 }
 
-// ========================= Module-Specific Parameter Reset =========================
-
-/**
- * @brief Reset the parameters specific to this module.
- * 
- * This function is used to reset any module-specific settings like sensor calibration,
- * relay states, or configurations.
- */
-void resetModuleSpecificParameters() {
-  // Reset module-specific parameters (e.g., clear sensor data, reset state)
-  // Example: resetRelayStates();
-
-  // Log the reset event
-  Serial.println("Module-specific parameters have been reset.");
-}
 
 // ========================= Module-Specific Configuration =========================
 

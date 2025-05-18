@@ -1,11 +1,10 @@
 #include "SmartCore_EEPROM.h"
-#include "SmartCore_Webserver.h"
 #include "SmartCore_System.h"
 #include "SmartCore_Network.h"
 #include "SmartCore_Log.h"
 #include "config.h"
-#include <SmartConnect_Async_WiFiManager.h>
 #include "module_reset.h"
+#include <WiFi.h>
 
 namespace SmartCore_EEPROM {
 
@@ -54,65 +53,34 @@ namespace SmartCore_EEPROM {
         return result;
     }
 
-    // --- Webname (char array) ---
-    void writeCustomWebnameToEEPROM() {
-        size_t length = strlen(webnamechar);
-        if (length >= EEPROM_STR_LEN) length = EEPROM_STR_LEN;
-
-        for (size_t i = 0; i < length; ++i) {
-            EEPROM.write(WEBNAME_ADDR + i, webnamechar[i]);
-        }
-
-        EEPROM.write(WEBNAME_ADDR + length, '\0');
-
-        for (size_t i = length + 1; i < EEPROM_STR_TOTAL; ++i) {
-            EEPROM.write(WEBNAME_ADDR + i, '\0');
-        }
-
-        EEPROM.commit();
-    }
-
-    char* readCustomWebnameFromEEPROM() {
-        static char result[EEPROM_STR_TOTAL];
-        for (int i = 0; i < EEPROM_STR_TOTAL - 1; ++i) {
-            result[i] = EEPROM.read(WEBNAME_ADDR + i);
-            if (result[i] == '\0') break;
-        }
-        result[EEPROM_STR_TOTAL - 1] = '\0';
-        return result;
-    }
-
     // --- String Helper (for String-based variables) ---
-    String readStringFromEEPROM(int address, int maxLength) {
-        char buffer[maxLength + 1];
-        for (int i = 0; i < maxLength; ++i) {
+    String readStringFromEEPROM(int address, int maxLen) {
+        char buffer[maxLen + 1];
+        for (int i = 0; i < maxLen; ++i) {
             buffer[i] = EEPROM.read(address + i);
             if (buffer[i] == '\0') break;
         }
-        buffer[maxLength] = '\0';
+        buffer[maxLen] = '\0';
         return String(buffer);
     }
 
-    void writeStringToEEPROM(int address, String data) {
+    void writeStringToEEPROM(int address, String data, int maxLen) {
         int length = data.length();
-        if (length > EEPROM_STR_LEN) length = EEPROM_STR_LEN;
-
+        if (length > maxLen - 1) length = maxLen - 1;   // always leave room for null
         for (int i = 0; i < length; ++i) {
             EEPROM.write(address + i, data[i]);
         }
-
         EEPROM.write(address + length, '\0');
-
-        for (int i = length + 1; i < EEPROM_STR_TOTAL; ++i) {
+        // pad the rest
+        for (int i = length + 1; i < maxLen; ++i) {
             EEPROM.write(address + i, '\0');
         }
-
         EEPROM.commit();
     }
 
     // --- Module Name (String) ---
     void writeModuleNameToEEPROM(const String& moduleName) {
-        writeStringToEEPROM(MOD_NAME_ADDR, moduleName);
+        writeStringToEEPROM(MOD_NAME_ADDR, moduleName, 41);
     }
 
     String readModuleNameFromEEPROM() {
@@ -121,7 +89,7 @@ namespace SmartCore_EEPROM {
 
     // --- Location (String) ---
     void writeLocationToEEPROM(const String& location) {
-        writeStringToEEPROM(MOD_LOCATION_ADDR, location);
+        writeStringToEEPROM(MOD_LOCATION_ADDR, location, 41);
     }
 
     String readLocationFromEEPROM() {
@@ -143,13 +111,6 @@ namespace SmartCore_EEPROM {
     }
 
     // --- Flags & Modes ---
-    void writeSmartBoatToEEPROM(bool smartBoat) {
-        writeBoolToEEPROM(SB_BOOL_ADDR, smartBoat);
-    }
-
-    bool readSmartBoatFromEEPROM() {
-        return readBoolFromEEPROM(SB_BOOL_ADDR);
-    }
 
     void writeFirstWiFiConnectFlag(bool flag) {
         writeBoolToEEPROM(EEPROM_ADDR_FLAG, flag);
@@ -173,14 +134,6 @@ namespace SmartCore_EEPROM {
 
     bool readResetConfigFlag() {
         return readBoolFromEEPROM(RESET_ADDR_FLAG);
-    }
-
-    void writeStandaloneModeToEEPROM(bool mode) {
-        writeBoolToEEPROM(STANDALONE_MODE_ADDR, mode);
-    }
-
-    bool readStandaloneModeFromEEPROM() {
-        return readBoolFromEEPROM(STANDALONE_MODE_ADDR);
     }
 
     // --- Upgrade Flag ---
@@ -207,76 +160,79 @@ namespace SmartCore_EEPROM {
             EEPROM.write(address, value);
             EEPROM.commit();
         }
-    }    
-
-// --- Reset All (if needed)
-void resetParameters() {
-    logMessage(LOG_INFO, "🔄 Resetting parameters to default...");
-
-    // --- Webname
-    webname = "smartmodule";
-    writeStringToEEPROM(WEBNAME_ADDR, webname);
-    strncpy(webnamechar, webname.c_str(), sizeof(webnamechar) - 1);
-    webnamechar[sizeof(webnamechar) - 1] = '\0';
-
-    // --- WiFi AP credentials
-    strncpy(apName, "SmartConnectAP", sizeof(apName) - 1);
-    apName[sizeof(apName) - 1] = '\0';
-    writeStringToEEPROM(CUSTOM_AP_NAME_ADDR, String(apName));
-
-    strncpy(apPassword, "12345678", sizeof(apPassword) - 1);
-    apPassword[sizeof(apPassword) - 1] = '\0';
-    writeStringToEEPROM(CUSTOM_AP_PASS_ADDR, String(apPassword));
-
-    String defaultLocation = "location";
-    writeLocationToEEPROM(defaultLocation);
-
-    // --- Flags
-    resetConfig = true;
-    writeResetConfigFlag(true);
-    
-    wifiSetupComplete = false;
-    writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, false);
-
-    smartConnectEnabled = false;
-    writeBoolToEEPROM(SC_BOOL_ADDR, false);
-
-    smartBoatEnabled = false;
-    writeBoolToEEPROM(SB_BOOL_ADDR, false);
-
-    standaloneMode = false;
-    writeStandaloneModeToEEPROM(false);
-
-    standaloneFlag = false;
-
-    // Reset first WiFi connect flag
-    writeFirstWiFiConnectFlag(true);
-
-    // Reset serial number assigned flag
-    writeSerialNumberAssignedFlag(false);
-
-    // --- MQTT reset
-    customMqtt = false;
-    writeBoolToEEPROM(CUSTOM_MQTT_ADDR, false);
-
-    memset(custom_mqtt_server, 0, sizeof(custom_mqtt_server));
-    writeStringToEEPROM(CUSTOM_MQTT_SERVER_ADDR, String(""));
-
-    custom_mqtt_port = 1883;
-    writeIntToEEPROM(CUSTOM_MQTT_PORT_ADDR, 1883);
-
-    // --- Commit all
-    if (!EEPROM.commit()) {
-        logMessage(LOG_ERROR, "❌ Failed to commit EEPROM changes during reset");
-    } else {
-        logMessage(LOG_INFO, "✅ EEPROM values reset and committed successfully");
     }
 
-    delay(250);
+    void ensureInitialized() {
+        #if defined(FORCE_EEPROM_RESET)
+            logMessage(LOG_WARN, "🧨 [FORCE RESET] EEPROM override triggered via build flag...");
+            for (int i = 0; i < EEPROM_TOTAL_SIZE; ++i) EEPROM.write(i, 0xFF);
+            EEPROM.commit();
+            resetParameters();
+            EEPROM.write(INIT_MAGIC_ADDR, INIT_MAGIC_VALUE);
+            EEPROM.commit();
+            return;
+        #endif
+        
+            uint8_t magic = EEPROM.read(INIT_MAGIC_ADDR);
+            if (magic != INIT_MAGIC_VALUE) {
+                logMessage(LOG_WARN, "🧨 EEPROM uninitialized or invalid — wiping and resetting...");
+                for (int i = 0; i < EEPROM_TOTAL_SIZE; ++i) EEPROM.write(i, 0xFF);
+                EEPROM.commit();
+                resetParameters();
+                EEPROM.write(INIT_MAGIC_ADDR, INIT_MAGIC_VALUE);
+                EEPROM.commit();
+            }
+        }
 
-    // --- Call user-defined overrides (if provided)
-    resetModuleSpecificParameters();
-}
+
+    // --- Reset All (if needed)
+    void resetParameters() {
+        logMessage(LOG_INFO, "🔄 Resetting parameters to default...");
+
+        String defaultLocation = "location";
+        writeLocationToEEPROM(defaultLocation);
+
+        // --- Flags
+        resetConfig = true;
+        writeResetConfigFlag(true);
+        
+        wifiSetupComplete = false;
+        writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, false);
+
+        // ---- MQTT Defaults ----
+        // Default to local "x.x.x.20" and port 1883
+        String ip = WiFi.localIP().toString();
+        int lastDot = ip.lastIndexOf('.');
+        if (lastDot != -1) {
+            ip = ip.substring(0, lastDot + 1) + "20";
+        } else {
+            ip = "192.168.4.20";  // fallback if no valid local IP
+        }
+        writeStringToEEPROM(MQTT_IP_ADDR, ip, 17);
+        writeStringToEEPROM(MQTT_PORT_ADDR, "1883", 7);
+
+        // --- Reset SSID and Password (clear to empty string with null terminator) ---
+        writeStringToEEPROM(WIFI_SSID_ADDR, "", 41); // 40+1 for null
+        writeStringToEEPROM(WIFI_PASS_ADDR, "", 41); // 40+1 for null
+
+        // Reset first WiFi connect flag
+        writeFirstWiFiConnectFlag(true);
+
+        // Reset serial number assigned flag
+        writeSerialNumberAssignedFlag(false);
+
+        // --- Commit all
+        if (!EEPROM.commit()) {
+            logMessage(LOG_ERROR, "❌ Failed to commit EEPROM changes during reset");
+        } else {
+            logMessage(LOG_INFO, "✅ EEPROM values reset and committed successfully");
+        }
+
+        delay(250);
+
+        // --- Call user-defined overrides (if provided)
+        resetModuleSpecificParameters();
+    }
 
 } // namespace
 

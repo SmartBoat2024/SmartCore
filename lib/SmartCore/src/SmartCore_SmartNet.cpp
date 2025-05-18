@@ -53,17 +53,14 @@ namespace SmartCore_SmartNet {
     void initializeAddress() {
         uint8_t storedAddress = SmartCore_EEPROM::readSmartNetAddress();
 
-        if (smartBoatEnabled) {
-            sendIdentityRequest();
-            waitForAssignment();  // ← implement logic to block for PGN_ASSIGN_ADDRESS
+        sendIdentityRequest();
+        waitForAssignment();  // ← implement logic to block for PGN_ASSIGN_ADDRESS
+        if (storedAddress != SMARTNET_ADDR_UNASSIGNED && !testAddressConflict(storedAddress)) {
+            smartNetAddress = storedAddress;
         } else {
-            if (storedAddress != SMARTNET_ADDR_UNASSIGNED && !testAddressConflict(storedAddress)) {
-                smartNetAddress = storedAddress;
-            } else {
-                uint8_t base = suggestedAddress();
-                smartNetAddress = findFreeAddressNear(base);  // ← implement scan function
-                SmartCore_EEPROM::writeSmartNetAddress(smartNetAddress);
-            }
+            uint8_t base = suggestedAddress();
+            smartNetAddress = findFreeAddressNear(base);  // ← implement scan function
+            SmartCore_EEPROM::writeSmartNetAddress(smartNetAddress);
         }
 
         logMessage(LOG_INFO, "✅ SmartNet address assigned:" +String(smartNetAddress));

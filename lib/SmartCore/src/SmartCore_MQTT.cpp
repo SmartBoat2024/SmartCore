@@ -19,12 +19,10 @@ namespace SmartCore_MQTT {
     TaskHandle_t timeSyncTaskHandle = NULL;
     void onMqttConnect(bool sessionPresent);
     void onMqttDisconnect(AsyncMqttClientDisconnectReason reason);
-    void mqttReconnectTask(void *param);
 
     static std::function<void(bool)> mqttConnectCallback = SmartCore_MQTT::onMqttConnect;
     static std::function<void(AsyncMqttClientDisconnectReason)> mqttDisconnectCallback = SmartCore_MQTT::onMqttDisconnect;
 
-    TaskHandle_t mqttReconnectTaskHandle = NULL;
 
     void generateMqttPrefix() {
         // Set mqttPrefix based on the first 4 chars of serialNumber
@@ -61,34 +59,20 @@ namespace SmartCore_MQTT {
         logMessage(LOG_INFO, "🧠 MQTT will configured using setWill().");
     
         // Determine MQTT server & port
-        const char* resolvedServer = nullptr;
-        int resolvedPort = 0;
-    
-        if (customMqtt) {
-            resolvedServer = custom_mqtt_server;
-            resolvedPort = custom_mqtt_port;
-            logMessage(LOG_INFO, "🌐 Using custom MQTT server (customMqtt = true)");
-        } else if (smartBoatEnabled) {
-            String ip = WiFi.localIP().toString();
-            int lastDot = ip.lastIndexOf('.');
-            if (lastDot != -1)
-                ip = ip.substring(0, lastDot + 1) + "20";
-    
-            strncpy(mqtt_server, ip.c_str(), sizeof(mqtt_server) - 1);
-            mqtt_server[sizeof(mqtt_server) - 1] = '\0';
-    
-            resolvedServer = mqtt_server;
-            resolvedPort = mqtt_port;
-    
-            logMessage(LOG_INFO, "⚓ SmartBoat mode enabled (smartBoatEnabled = true)");
-            logMessage(LOG_INFO, "➡️  Inferred MQTT IP: " + ip);
-        } else {
-            logMessage(LOG_WARN, "⚠️ No valid MQTT configuration found. Exiting setup.");
-            return;
-        }
+        String mqttIp = SmartCore_EEPROM::readStringFromEEPROM(MQTT_IP_ADDR, 40);   // Use your actual max len
+        String mqttPortStr = SmartCore_EEPROM::readStringFromEEPROM(MQTT_PORT_ADDR, 6);
+        int mqttPort = mqttPortStr.toInt();
+
+        strncpy(mqtt_server, mqttIp.c_str(), sizeof(mqtt_server) - 1);
+        mqtt_server[sizeof(mqtt_server) - 1] = '\0';
+        String resolvedServer = mqtt_server;
+        int resolvedPort = mqttPort;
+
+        logMessage(LOG_INFO, "➡️  Inferred MQTT IP: " + resolvedServer);
+       
     
         // Final configuration
-        mqttClient.setServer(resolvedServer, resolvedPort);
+        mqttClient.setServer(mqtt_server, (uint16_t)resolvedPort);
         logMessage(LOG_INFO, "📡 MQTT server set to: " + String(resolvedServer));
         logMessage(LOG_INFO, "📟 MQTT port set to: " + String(resolvedPort));
     
@@ -115,12 +99,6 @@ namespace SmartCore_MQTT {
     void onMqttConnect(bool sessionPresent) {
         Serial.println("Connected to MQTT broker.");
         mqttIsConnected = true;
-    
-        if (mqttReconnectTaskHandle) {
-            vTaskDelete(mqttReconnectTaskHandle);
-            mqttReconnectTaskHandle = NULL;
-            Serial.println("🛑 Reconnect task stopped");
-        }
     
         // Subscribe to module-specific topic: serialNumber/#
         String serialTopic = String(serialNumber) + "/#";
@@ -240,14 +218,9 @@ namespace SmartCore_MQTT {
             StaticJsonDocument<1024> response;
             response["serialNumber"] = serialNumber;
             response["moduleName"] = moduleName;
-            response["webName"] = webname;
             response["location"] = location;
             response["mac"] = WiFi.macAddress();
             response["ip"] = WiFi.localIP().toString();
-            response["customMqtt"] = customMqtt;
-            response["customMqttServer"] = custom_mqtt_server;
-            response["customMqttPort"] = custom_mqtt_port;
-            response["smartBoatEnabled"] = smartBoatEnabled;
             response["firmwareVersion"] = FW_VER;
     
             String payload;
@@ -269,16 +242,6 @@ namespace SmartCore_MQTT {
                 }
             }
     
-            if (doc.containsKey("webName")) {
-                const char* name = doc["webName"];
-                if (name && strlen(name) < sizeof(webnamechar)) {
-                    strncpy(webnamechar, name, sizeof(webnamechar) - 1);
-                    webnamechar[sizeof(webnamechar) - 1] = '\0';
-                    webname = String(webnamechar);
-                    SmartCore_EEPROM::writeStringToEEPROM(WEBNAME_ADDR, webname);
-                    settingsChanged = true;
-                }
-            }
             
             if (doc.containsKey("location")) {
                 String loc = doc["location"].as<String>();
@@ -287,30 +250,6 @@ namespace SmartCore_MQTT {
                     SmartCore_EEPROM::writeLocationToEEPROM(location);
                     settingsChanged = true;
                 }
-            }
-    
-            if (doc.containsKey("customMqtt")) {
-                customMqtt = doc["customMqtt"];
-                SmartCore_EEPROM::writeBoolToEEPROM(CUSTOM_MQTT_ADDR, customMqtt);
-                settingsChanged = true;
-            }
-    
-            if (doc.containsKey("customMqttServer")) {
-                strlcpy(custom_mqtt_server, doc["customMqttServer"], sizeof(custom_mqtt_server));
-                SmartCore_EEPROM::writeStringToEEPROM(CUSTOM_MQTT_SERVER_ADDR, custom_mqtt_server);
-                settingsChanged = true;
-            }
-    
-            if (doc.containsKey("customMqttPort")) {
-                custom_mqtt_port = doc["customMqttPort"];
-                SmartCore_EEPROM::writeIntToEEPROM(CUSTOM_MQTT_PORT_ADDR, custom_mqtt_port);
-                settingsChanged = true;
-            }
-    
-            if (doc.containsKey("smartBoatEnabled")) {
-                smartBoatEnabled = doc["smartBoatEnabled"];
-                SmartCore_EEPROM::writeBoolToEEPROM(SB_BOOL_ADDR, smartBoatEnabled);
-                settingsChanged = true;
             }
     
             if (settingsChanged) {
@@ -527,29 +466,7 @@ namespace SmartCore_MQTT {
     
         // Signal that a new pattern is available
         triggerFlashPattern(flashPattern, DEBUG_COLOR_YELLOW);
-        if (mqttReconnectTaskHandle == NULL) {
-            xTaskCreatePinnedToCore(mqttReconnectTask, "MQTT Reconnect", 4096, NULL, 1, &mqttReconnectTaskHandle, 0);
-        }
-    }
-
-    void scheduleReconnect() {
-        static unsigned long lastAttempt = 0;
-        unsigned long now = millis();
-    
-        if (now - lastAttempt > 5000) {
-            lastAttempt = now;
-            logMessage(LOG_INFO, "🔁 Attempting MQTT reconnect...");
-            mqttClient.connect();
-        }
-    }
-    
-    void mqttReconnectTask(void *param) {
-        for (;;) {
-            if (WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
-                SmartCore_MQTT::scheduleReconnect();  // Includes exponential backoff
-            }
-            vTaskDelay(pdMS_TO_TICKS(5000));
-        }
+     
     }
 
     void metricsTask(void *parameter) {

@@ -27,6 +27,7 @@ namespace SmartCore_System {
     void preinit();
     void init();
     void setModuleSettings(const SmartCoreSettings& settings);
+    const SmartCoreSettings& getModuleSettings();
     void getModuleConfig();
     void createAppTasks();
     void checkresetButtonTask(void *parameter);

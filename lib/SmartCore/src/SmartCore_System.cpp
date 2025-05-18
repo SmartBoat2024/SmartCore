@@ -9,7 +9,6 @@
 #include "SmartCore_EEPROM.h"
 #include "SmartCore_OTA.h"
 #include "SmartCore_Log.h"
-#include <SmartConnect_Async_WiFiManager.h>
 #include "SmartCore_WiFi.h"
 #include "SmartCore_MQTT.h"
 #include <ArduinoJson.h>
@@ -37,7 +36,8 @@ namespace SmartCore_System {
 
     static SmartCoreSettings _settings = {
         .serialNumber = "UNKNOWN",
-        .moduleName = "Generic SmartCore"
+        .moduleName = "Generic SmartCore",
+        .apSSID = "SmartModule"
     };
 
     void setModuleSettings(const SmartCoreSettings& settings) {
@@ -53,8 +53,12 @@ namespace SmartCore_System {
         serialNumber[sizeof(serialNumber) - 1] = '\0';
     
         // 💾 WRITE TO EEPROM
-        SmartCore_EEPROM::writeStringToEEPROM(SN_ADDR, String(settings.serialNumber));
+        SmartCore_EEPROM::writeStringToEEPROM(SN_ADDR, String(settings.serialNumber), 41);
         SmartCore_EEPROM::writeModuleNameToEEPROM(settings.moduleName);
+    }
+
+    const SmartCoreSettings& getModuleSettings() {
+        return _settings;
     }
 
     void preinit(){
@@ -114,7 +118,7 @@ namespace SmartCore_System {
         } else {
             logMessage(LOG_ERROR, "❌ Failed to initialize SmartNet CAN bus");
         }
-        SmartCore_WiFi::startWiFiManagerTask();
+        SmartCore_WiFi::startWiFiProvisionTask();
         
     }
 
@@ -125,45 +129,7 @@ namespace SmartCore_System {
         serialNumber[sizeof(serialNumber) - 1] = '\0'; // Ensure null-termination
         logMessage(LOG_INFO, "get config --- serialnumber: " + String(serialNumber));
     
-        // Read web name
-        webname = SmartCore_EEPROM::readStringFromEEPROM(WEBNAME_ADDR, sizeof(webnamechar));
-        webname.toCharArray(webnamechar, sizeof(webnamechar));
-    
-        // Read standalone mode flag
-        standaloneMode = SmartCore_EEPROM::readStandaloneModeFromEEPROM();
-    
-        // Read AP Name and Password from EEPROM and copy them into apName and apPassword buffers
-        strncpy(apName, SmartCore_EEPROM::readStringFromEEPROM(CUSTOM_AP_NAME_ADDR, 40).c_str(), sizeof(apName) - 1);
-        apName[sizeof(apName) - 1] = '\0';  // Ensure null termination
-        
-        strncpy(apPassword, SmartCore_EEPROM::readStringFromEEPROM(CUSTOM_AP_PASS_ADDR, 40).c_str(), sizeof(apPassword) - 1);
-        apPassword[sizeof(apPassword) - 1] = '\0';  // Ensure null termination
-
-        location = SmartCore_EEPROM::readLocationFromEEPROM();
-        
-        // Read custom MQTT enabled flag
-        customMqtt = SmartCore_EEPROM::readBoolFromEEPROM(CUSTOM_MQTT_ADDR);
-        logMessage(LOG_INFO, "Custom MQTT enabled: " + String(customMqtt));
-    
-        // Check for conflicts between SmartBoat and Custom MQTT
-        if (customMqtt && smartBoatEnabled) {
-            logMessage(LOG_WARN, "Error: Both SmartBoat and Custom MQTT are enabled. Disabling Custom MQTT.");
-            customMqtt = false;
-            SmartCore_EEPROM::writeBoolToEEPROM(CUSTOM_MQTT_ADDR, customMqtt);
-        }
-    
-        // Load custom MQTT settings if enabled
-        if (customMqtt) {
-            // Read custom MQTT server
-            strncpy(custom_mqtt_server, SmartCore_EEPROM::readStringFromEEPROM(CUSTOM_MQTT_SERVER_ADDR, sizeof(custom_mqtt_server)).c_str(), sizeof(custom_mqtt_server) - 1);
-            custom_mqtt_server[sizeof(custom_mqtt_server) - 1] = '\0';  // Ensure null termination
-        
-            // Read custom MQTT port (as int)
-            custom_mqtt_port = SmartCore_EEPROM::readIntFromEEPROM(CUSTOM_MQTT_PORT_ADDR);
-        
-            logMessage(LOG_INFO, "Custom MQTT Server: "); Serial.println(custom_mqtt_server);
-            logMessage(LOG_INFO, "Custom MQTT Port: "); Serial.println(custom_mqtt_port);
-        }
+        location = SmartCore_EEPROM::readLocationFromEEPROM();   
 
         // Read first WiFi connect flag
         firstWiFiConnect = SmartCore_EEPROM::readFirstWiFiConnectFlag();
@@ -174,13 +140,6 @@ namespace SmartCore_System {
         logMessage(LOG_INFO, "🧠 serialNumberAssigned: " + String(serialNumberAssigned));
     
         SmartCore_OTA::isUpgradeAvailable = SmartCore_EEPROM::loadUpgradeFlag();
-    
-        // Read smartBoatEnabled flag
-        smartBoatEnabled = EEPROM.read(SB_BOOL_ADDR) == 1;
-    
-        // Read smartConnectEnabled flag
-        smartConnectEnabled = EEPROM.read(SC_BOOL_ADDR) == 1;
-        logMessage(LOG_INFO, "smartConnect: " + String(smartConnectEnabled));
     
         moduleName = SmartCore_EEPROM::readModuleNameFromEEPROM();
 

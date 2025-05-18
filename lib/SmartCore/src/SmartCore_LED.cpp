@@ -2,6 +2,9 @@
 #include "SmartCore_Network.h"
 #include "SmartCore_MQTT.h"
 #include "SmartCore_Log.h"
+#include "SmartCore_EEPROM.h"
+#include <WiFi.h>
+
 
 QueueHandle_t flashQueue;
 SemaphoreHandle_t ledMutex = nullptr;
@@ -143,60 +146,83 @@ void flashLEDTask(void *parameter) {
     }
 }
 
-// Function to check WiFi and MQTT connection
-void wifiMqttCheckTask(void *parameter) {
-    for (;;) {
-        // 🚨 1. If we're not in STATUS mode, skip
-        if (currentLEDMode != LEDMODE_STATUS) {
-            logMessage(LOG_INFO, "⏳ LED mode is not STATUS (mode = " + String(currentLEDMode) + "), skipping LED update.");
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
-            continue;
-        }
-
-        // 🧯 2. Watchdog for WiFiManager lockup
-        if (!wifiManagerFinished && millis() - wifiManagerStartTime > 300000) {
-            logMessage(LOG_WARN, "🛑 WiFiManager hang detected! Triggering emergency reset...");
-            String emergencyPattern = "..--";
-            xQueueSend(flashQueue, (void *)&emergencyPattern, 0);
-            delay(500);
-            ESP.restart();
-        }
-
-        // ⚠️ 3. If a flash pattern is running, don't mess with LEDs
-        if ((flashQueue && uxQueueMessagesWaiting(flashQueue) > 0) || currentLEDMode != LEDMODE_STATUS) {
-            logMessage(LOG_INFO, "⏳ LED update skipped — pattern running or mode not STATUS");
-            logMessage(LOG_INFO, "🧮 Queue count: " + String(uxQueueMessagesWaiting(flashQueue)) + ", LED mode: " + String(currentLEDMode));
-            vTaskDelay(5000 / portTICK_PERIOD_MS);
-            continue;
-        }
-
-        // ✅ 4. Proceed to update LED based on current state
-        if (xSemaphoreTake(ledMutex, portMAX_DELAY) == pdTRUE) {
-            if (resetConfig) {
-                logMessage(LOG_INFO, "🟢 LED: Reset Config Mode");
-                setRGBColor(0, 255, 0);  // Green
-            } else if (standaloneMode) {
-                logMessage(LOG_INFO, "🟣 LED: Standalone Mode");
-                setRGBColor(130, 0, 230);  // Magenta
-            } else if (WiFi.status() != WL_CONNECTED) {
-                logMessage(LOG_INFO, "🔴 LED: No WiFi");
-                setRGBColor(255, 0, 0);  // Red
-            } else if (!mqttIsConnected) {
-                logMessage(LOG_INFO, "💗 LED: WiFi OK, MQTT not connected");
-                setRGBColor(255, 60, 80);  // Hot Pink
-            } else {
-                logMessage(LOG_INFO, "🔵 LED: WiFi + MQTT connected");
-                setRGBColor(0, 0, 255);  // Blue
+    // Function to check WiFi and MQTT connection
+    void wifiMqttCheckTask(void *parameter) {
+        static unsigned long lastWifiRetry = 0;
+        static unsigned long wifiRetryInterval = 10000;     // 10 seconds min
+        static unsigned long lastMqttRetry = 0;
+        static unsigned long mqttRetryInterval = 10000;     // 10 seconds min
+        const unsigned long maxBackoff = 300000;  
+        for (;;) {
+            // 🚨 1. If we're not in STATUS mode, skip
+            if (currentLEDMode != LEDMODE_STATUS) {
+                logMessage(LOG_INFO, "⏳ LED mode is not STATUS (mode = " + String(currentLEDMode) + "), skipping LED update.");
+                vTaskDelay(5000 / portTICK_PERIOD_MS);
+                continue;
             }
 
-            xSemaphoreGive(ledMutex);
-        } else {
-            logMessage(LOG_WARN, "⚠️ Failed to take LED mutex in wifiMqttCheckTask");
-        }
+            // 2a WiFi retry with exponential backoff
+            if (!resetConfig && WiFi.status() != WL_CONNECTED) {
+                unsigned long now = millis();
+                if (now - lastWifiRetry > wifiRetryInterval) {
+                    logMessage(LOG_INFO, "🔄 Attempting WiFi reconnect (interval: " + String(wifiRetryInterval) + " ms)...");
+                    String ssid = SmartCore_EEPROM::readStringFromEEPROM(WIFI_SSID_ADDR, 41);
+                    String pass = SmartCore_EEPROM::readStringFromEEPROM(WIFI_PASS_ADDR, 41);
+                    WiFi.begin(ssid.c_str(), pass.c_str());
+                    lastWifiRetry = now;
+                    wifiRetryInterval = min(wifiRetryInterval * 2, maxBackoff);
+                }
+            } else if (WiFi.status() == WL_CONNECTED && wifiRetryInterval != 10000) {
+                // Reset backoff after successful connection
+                wifiRetryInterval = 10000;
+            }
 
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+            // 2b MQTT retry with exponential backoff
+            if (WiFi.status() == WL_CONNECTED && !mqttIsConnected) {
+                unsigned long now = millis();
+                if (now - lastMqttRetry > mqttRetryInterval) {
+                    logMessage(LOG_INFO, "🔄 Attempting MQTT reconnect (interval: " + String(mqttRetryInterval) + " ms)...");
+                    SmartCore_MQTT::setupMQTTClient();
+                    lastMqttRetry = now;
+                    mqttRetryInterval = min(mqttRetryInterval * 2, maxBackoff);
+                }
+            } else if (mqttIsConnected && mqttRetryInterval != 10000) {
+                // Reset backoff after successful connection
+                mqttRetryInterval = 10000;
+            }
+
+            // ⚠️ 3. If a flash pattern is running, don't mess with LEDs
+            if ((flashQueue && uxQueueMessagesWaiting(flashQueue) > 0) || currentLEDMode != LEDMODE_STATUS) {
+                logMessage(LOG_INFO, "⏳ LED update skipped — pattern running or mode not STATUS");
+                logMessage(LOG_INFO, "🧮 Queue count: " + String(uxQueueMessagesWaiting(flashQueue)) + ", LED mode: " + String(currentLEDMode));
+                vTaskDelay(5000 / portTICK_PERIOD_MS);
+                continue;
+            }
+
+            // ✅ 4. Proceed to update LED based on current state
+            if (xSemaphoreTake(ledMutex, portMAX_DELAY) == pdTRUE) {
+                if (resetConfig) {
+                    logMessage(LOG_INFO, "🟢 LED: Reset Config Mode");
+                    setRGBColor(0, 255, 0);  // Green
+                } else if (WiFi.status() != WL_CONNECTED) {
+                    logMessage(LOG_INFO, "🔴 LED: No WiFi");
+                    setRGBColor(255, 0, 0);  // Red
+                } else if (!mqttIsConnected) {
+                    logMessage(LOG_INFO, "💗 LED: WiFi OK, MQTT not connected");
+                    setRGBColor(255, 60, 80);  // Hot Pink
+                } else {
+                    logMessage(LOG_INFO, "🔵 LED: WiFi + MQTT connected");
+                    setRGBColor(0, 0, 255);  // Blue
+                }
+
+                xSemaphoreGive(ledMutex);
+            } else {
+                logMessage(LOG_WARN, "⚠️ Failed to take LED mutex in wifiMqttCheckTask");
+            }
+
+            vTaskDelay(5000 / portTICK_PERIOD_MS);
+        }
     }
-}
 
 
   void provisioningBlinkTask(void *parameter) {
