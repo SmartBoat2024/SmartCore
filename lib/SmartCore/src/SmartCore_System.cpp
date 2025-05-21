@@ -366,6 +366,10 @@ namespace SmartCore_System {
         });
     
         safeServer.on("/retry", HTTP_GET, [](AsyncWebServerRequest* request) {
+            logMessage(LOG_WARN, "🧹 Safe Mode: Clearing crash counters...");
+            EEPROM.write(CRASH_COUNTER_ADDR, 0);
+            EEPROM.write(RUNTIME_CRASH_COUNTER_ADDR, 0);
+            EEPROM.commit();
             request->send(200, "text/plain", "Rebooting...");
             delay(1000);
             ESP.restart();
