@@ -6,8 +6,6 @@ namespace SmartCore_OTA {
 
 extern TaskHandle_t otaTaskHandle;
 
-extern AsyncWebSocket safeWs;
-
 extern bool isUpgradeAvailable;
 extern bool shouldUpdateFirmware;
 

@@ -7,15 +7,15 @@
 #include "SmartCore_MQTT.h"
 #include "SmartCore_Network.h"
 #include "SmartCore_SmartNet.h"
-#include <AsyncWebSocket.h> 
+#include "SmartCore_EEPROM.h"
 
+// Removed: #include <AsyncWebSocket.h>
 
 namespace SmartCore_OTA {
     bool isUpgradeAvailable = false;
     bool shouldUpdateFirmware = false;
 
     TaskHandle_t otaTaskHandle = NULL;
-    AsyncWebSocket safeWs("/ws");
 
     void otaTask(void *parameter) {
         while (true) {
@@ -30,7 +30,7 @@ namespace SmartCore_OTA {
                 if (SmartCore_MQTT::timeSyncTaskHandle) vTaskSuspend(SmartCore_MQTT::timeSyncTaskHandle);
                 if (SmartCore_SmartNet::smartNetTaskHandle) vTaskSuspend(SmartCore_SmartNet::smartNetTaskHandle);
 
-                ota();  // 🔁 Call your OTA handler — must yield or watch-dog safe!
+                ota();  // 🔁 OTA handler
 
                 if (flashLEDTaskHandle) vTaskResume(flashLEDTaskHandle);
                 if (wifiMqttCheckTaskHandle) vTaskResume(wifiMqttCheckTaskHandle);
@@ -43,84 +43,78 @@ namespace SmartCore_OTA {
                 logMessage(LOG_INFO, "✅ OTA complete. System tasks resumed.");
                 shouldUpdateFirmware = false;
             }
-
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
-
         vTaskDelete(NULL);  
     }
 
     void onUpdateProgress(int progress, int total) {
+        // Defensive: Flag OTA in progress, not available!
+        isUpgradeAvailable = false;
+        SmartCore_EEPROM::saveUpgradeFlag(false);
+
         int percent = (progress * 100) / total;
         static int lastPercent = -1;
-        static int lastSafeWsPercent = -5;
-    
+
         if (percent != lastPercent) {
             lastPercent = percent;
-    
-            char progressMsg[50];
-            snprintf(progressMsg, sizeof(progressMsg), "Progress: %d%%\n", percent);
-            Serial.print(progressMsg);
-    
-            // 🌍 Standard JSON with full info
-            DynamicJsonDocument fullDoc(256);
-            fullDoc["type"] = "otaProgress";
-            fullDoc["serial"] = serialNumber;
-            fullDoc["progress"] = percent;
-    
-            String fullJson;
-            serializeJson(fullDoc, fullJson);
-    
-            #if WEBSERVER_ENABLED
-            ws.textAll(fullJson); // Standard UI WS
-            #endif
-    
-            if (mqttIsConnected) {
-                mqttClient.publish((String(mqttPrefix) + "/ota/progress").c_str(), 0, false, fullJson.c_str());
+            DynamicJsonDocument doc(128);
+            doc["type"] = "otaProgress";
+            doc["serialNumber"] = serialNumber;
+            doc["progress"] = percent;
+            String json;
+            serializeJson(doc, json);
+            if (mqttIsConnected && mqttClient) {
+                mqttClient->publish("module/upgrade", 0, false, json.c_str());
             }
-    
-            // ✅ Throttle updates to Safe Mode WS (every 5%)
-            if (SmartCore_OTA::safeWs.count() > 0 && percent - lastSafeWsPercent >= 5) {
-                if (percent >= 100) {
-                    SmartCore_System::clearCrashCounter(CRASH_COUNTER_ALL);
-                }
-
-                DynamicJsonDocument safeDoc(64);
-                safeDoc["progress"] = percent;
-    
-                String safeJson;
-                serializeJson(safeDoc, safeJson);
-    
-                Serial.println("🧪 Sending JSON to recovery UI:");
-                Serial.println(safeJson);
-                Serial.printf("🧪 safeWs.count() = %d\n", SmartCore_OTA::safeWs.count());
-    
-                SmartCore_OTA::safeWs.textAll(safeJson);
-                lastSafeWsPercent = percent;
-            }
+            Serial.printf("OTA Progress: %d%% published to module/upgrade\n", percent);
         }
     }
-    
-    
 
     void ota() {
+        // At the start, clear the flag
+        isUpgradeAvailable = false;
+        SmartCore_EEPROM::saveUpgradeFlag(false);
+
+        StaticJsonDocument<256> status_response;
+        status_response["firmwareVersion"] = FW_VER;
+        status_response["updateAvailable"] = isUpgradeAvailable;
+
+        String payload_status;
+        serializeJson(status_response, payload_status);
+        mqttClient->publish("module/config/update", 1, true, payload_status.c_str());
+
+        Serial.println("✅ Published generic module config");
+
         Serial.println("Calling OTADRIVE.updateFirmware()...");
-        updateInfo result = OTADRIVE.updateFirmware();
+        updateInfo result = OTADRIVE.updateFirmware(); // ESP reboots if successful
 
-        DynamicJsonDocument resultDoc(128);
-        resultDoc["type"] = "otaProgress";
-        resultDoc["progress"] = result.available ? 100 : -1;
+        // If code continues, OTA probably failed or was not available
+        // Re-check upgrade availability just in case
+        if (!result.available) {
+            // OTA failed, check again
+            updateInfo checkResult = OTADRIVE.updateFirmwareInfo();
+            if (checkResult.available) {
+                isUpgradeAvailable = true;
+                SmartCore_EEPROM::saveUpgradeFlag(true);
+            } else {
+                isUpgradeAvailable = false;
+                SmartCore_EEPROM::saveUpgradeFlag(false);
+            }
+        }
 
-        String resultJson;
-        serializeJson(resultDoc, resultJson);
+        // Publish current status/config
+        StaticJsonDocument<256> response;
+        response["firmwareVersion"] = FW_VER;
+        response["updateAvailable"] = isUpgradeAvailable;
 
-        #if WEBSERVER_ENABLED
-            ws.textAll(resultJson);  // Guarded by flag
-        #endif
+        String payload;
+        serializeJson(response, payload);
+        mqttClient->publish("module/config/update", 1, true, payload.c_str());
+
+        Serial.println("✅ Published generic module config");
 
         if (result.available) {
-            logMessage(LOG_INFO, "ota update successful");
-            isUpgradeAvailable = false;
             logMessage(LOG_INFO, "OTA update completed successfully. Version: " + String(result.version));
         } else {
             Serial.println("ota update failed!!");
