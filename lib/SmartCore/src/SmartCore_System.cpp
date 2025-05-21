@@ -32,6 +32,8 @@ namespace SmartCore_System {
     bool buttonPressed = false;
     volatile bool inOTAUpdate = false;
 
+    static AsyncWebSocket safeWs("/ws");
+
     AsyncEventSource events("/events");
 
     static SmartCoreSettings _settings = {
@@ -80,6 +82,8 @@ namespace SmartCore_System {
         runtimeCrashCounter++;
         EEPROM.write(RUNTIME_CRASH_COUNTER_ADDR, runtimeCrashCounter);
         EEPROM.commit();
+
+        Serial.printf("🐛 Firmware version (FW_VER): %s\n", FW_VER);
 
         OTADRIVE.setInfo(APIKEY, FW_VER);
         OTADRIVE.onUpdateFirmwareProgress(SmartCore_OTA::onUpdateProgress);
@@ -254,12 +258,18 @@ namespace SmartCore_System {
         initSmartCoreLED();
         setRGBColor(255, 255, 0);
     
-        SmartCore_WiFi::startMinimalWifiSetup();
+        // WiFi AP setup for recovery
+        WiFi.disconnect(true, false);
+        delay(100);
+        WiFi.mode(WIFI_AP);
+        String apSsid = String(SmartCore_System::getModuleSettings().apSSID) + "_RECOVERY";
+        WiFi.softAP(apSsid.c_str(), nullptr);
+        logMessage(LOG_INFO, "🛟 Safe Mode AP SSID: " + apSsid);
     
         // Start Web Server
         static AsyncWebServer safeServer(81);
 
-        SmartCore_OTA::safeWs.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
+        safeWs.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
             AwsEventType type, void *arg, uint8_t *data, size_t len) {
         if (type == WS_EVT_CONNECT) {
         Serial.println("🌐 Recovery WS client connected");
@@ -272,9 +282,10 @@ namespace SmartCore_System {
         }
         });
 
-        safeServer.addHandler(&SmartCore_OTA::safeWs);
+        safeServer.addHandler(&safeWs);
     
         safeServer.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+            Serial.println("on recovery portal homepage");
             String html = R"rawliteral(
             <!DOCTYPE html>
             <html>
@@ -308,7 +319,7 @@ namespace SmartCore_System {
                 <button onclick="fetch('/retry').then(()=>alert('🔁 Retrying boot...'))">🔁 Try Normal Boot</button><br>
                 <button onclick="fetch('/clear').then(()=>alert('🧹 EEPROM Cleared. Rebooting...'))">🧹 Clear EEPROM</button><br>
                 <button onclick="fetch('/update')">📦 Firmware Update</button><br>   
-                <button onclick="fetch('/wifi').then(()=>alert('📡 Starting WiFi Config Portal...'))">📡 Reconfigure WiFi</button><br><br>
+                <button onclick="fetch('/wifi').then(()=>alert('📡 Restart SmartCOnnect...'))">📡 Reconfigure WiFi</button><br><br>
 
                 <progress id="otaProgress" max="100" value="0"></progress>
                 <p id="progressText">Waiting for OTA update...</p>
@@ -388,7 +399,8 @@ namespace SmartCore_System {
         });
     
         safeServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest* request) {
-            request->send(200, "text/plain", "Starting WiFi config portal...");
+            request->send(200, "text/plain", "Reset Wifi details and restart SmartConnect...");
+            WiFi.disconnect(true, true);
             delay(1000);
             ESP.restart();
         });
@@ -414,7 +426,7 @@ namespace SmartCore_System {
                 }
             }
         
-            SmartCore_OTA::safeWs.cleanupClients();
+            safeWs.cleanupClients();
             delay(10); // Allow tasks and OTA to breathe
         }
     }

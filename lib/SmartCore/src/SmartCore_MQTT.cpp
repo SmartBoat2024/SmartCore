@@ -42,18 +42,22 @@ namespace SmartCore_MQTT {
     void setupMQTTClient() {
         logMessage(LOG_INFO, "🔧 Configuring MQTT...");
         generateMqttPrefix();  // Also sets mqttWillTopic internally
+
+        if (mqttClient) delete mqttClient;
+        
+        mqttClient = new AsyncMqttClient();
     
         // Set up callbacks and keepalive
-        mqttClient.onConnect(onMqttConnect);
-        mqttClient.onDisconnect(onMqttDisconnect);
-        mqttClient.onMessage(onMqttMessage);
-        mqttClient.setKeepAlive(15);
+        mqttClient->onConnect(onMqttConnect);
+        mqttClient->onDisconnect(onMqttDisconnect);
+        mqttClient->onMessage(onMqttMessage);
+        mqttClient->setKeepAlive(15);
         String clientId = WiFi.macAddress();
         clientId.replace(":", "");  // optional: clean format (e.g., AABBCCDDEEFF)
-        mqttClient.setClientId(clientId.c_str());
+        mqttClient->setClientId(clientId.c_str());
     
         // Configure Will
-        mqttClient.setWill(mqttWillTopic, 1, true, serialNumber, strlen(serialNumber));
+        mqttClient->setWill(mqttWillTopic, 1, true, serialNumber, strlen(serialNumber));
         logMessage(LOG_INFO, "🧠 MQTT will topic: " + String(mqttWillTopic));
         logMessage(LOG_INFO, "🧠 MQTT will payload: " + String(serialNumber));
         logMessage(LOG_INFO, "🧠 MQTT will configured using setWill().");
@@ -72,7 +76,7 @@ namespace SmartCore_MQTT {
        
     
         // Final configuration
-        mqttClient.setServer(mqtt_server, (uint16_t)resolvedPort);
+        mqttClient->setServer(mqtt_server, (uint16_t)resolvedPort);
         logMessage(LOG_INFO, "📡 MQTT server set to: " + String(resolvedServer));
         logMessage(LOG_INFO, "📟 MQTT port set to: " + String(resolvedPort));
     
@@ -88,9 +92,16 @@ namespace SmartCore_MQTT {
             Serial.println(WiFi.status());
     
             Serial.print("🧠 MQTT is connected: ");
-            Serial.println(mqttClient.connected() ? "yes" : "no");
+            Serial.println(mqttClient->connected() ? "yes" : "no");
+
+            Serial.println("== MQTT Configuration ==");
+            Serial.print("Client ID: "); Serial.println(clientId);
+            Serial.print("Will topic: "); Serial.println(mqttWillTopic);
+            Serial.print("Will payload: "); Serial.println(serialNumber);
+            Serial.print("Server: "); Serial.println(mqtt_server);
+            Serial.print("Port: "); Serial.println(resolvedPort);
     
-            mqttClient.connect();
+            mqttClient->connect();
         }  else {
             logMessage(LOG_WARN, "📶 WiFi not connected, skipping MQTT connect.");
         }
@@ -102,16 +113,16 @@ namespace SmartCore_MQTT {
     
         // Subscribe to module-specific topic: serialNumber/#
         String serialTopic = String(serialNumber) + "/#";
-        mqttClient.subscribe(serialTopic.c_str(), 1);
+        mqttClient->subscribe(serialTopic.c_str(), 1);
         Serial.print("✅ Subscribed to ");
         Serial.println(serialTopic);
 
         // Subscribe to global update topic
-        mqttClient.subscribe("update/#", 1);
+        mqttClient->subscribe("update/#", 1);
         Serial.println("✅ Subscribed to update/#");
     
         // Publish initial presence messages
-        mqttClient.publish((String(mqttPrefix) + "/connected").c_str(), 1, true, "connected");
+        mqttClient->publish((String(mqttPrefix) + "/connected").c_str(), 1, true, "connected");
         requestSmartBoatTime();
         
         logMessage(LOG_INFO, "🔍 firstWifiCOnnect: " + String(firstWiFiConnect ? "true" : "false"));
@@ -140,8 +151,8 @@ namespace SmartCore_MQTT {
             serializeJson(doc, payload);
             logMessage(LOG_INFO, "📦 Payload to publish: " + payload);
         
-            if (mqttClient.connected()) {
-                mqttClient.publish(topic, 1, true, payload.c_str());
+            if (mqttClient->connected()) {
+                mqttClient->publish(topic, 1, true, payload.c_str());
                 logMessage(LOG_INFO, "✅ MQTT publish call made.");
             } else {
                 logMessage(LOG_WARN, "❌ MQTT client not connected — skipping publish.");
@@ -222,10 +233,11 @@ namespace SmartCore_MQTT {
             response["mac"] = WiFi.macAddress();
             response["ip"] = WiFi.localIP().toString();
             response["firmwareVersion"] = FW_VER;
+            response["updateAvailable"] = SmartCore_EEPROM::loadUpgradeFlag();
     
             String payload;
             serializeJson(response, payload);
-            mqttClient.publish("module/config/update", 1, true, payload.c_str());
+            mqttClient->publish("module/config/update", 1, true, payload.c_str());
     
             Serial.println("✅ Published generic module config");
         }
@@ -307,20 +319,20 @@ namespace SmartCore_MQTT {
     }
     
     void handleUpgradeMessage(const String& message) {
-        Serial.println("⬆️ Upgrade message received");
-    
+        Serial.println("⬆️ OTA upgrade message received");
+
         StaticJsonDocument<256> doc;
         DeserializationError error = deserializeJson(doc, message);
-    
+
         if (error) {
-            Serial.print("❌ Failed to parse update JSON: ");
+            Serial.print("❌ Failed to parse upgrade JSON: ");
             Serial.println(error.c_str());
             return;
         }
-    
+
         String action = doc["action"] | "";
         bool confirm = doc["confirm"] | false;
-    
+
         if (action == "upgrade") {
             if (confirm) {
                 Serial.println("✅ OTA confirmed. Spawning OTA task...");
@@ -331,47 +343,29 @@ namespace SmartCore_MQTT {
             } else {
                 Serial.println("⚠️ Upgrade requested but not confirmed. Ignoring.");
             }
-        } 
-        else if (action == "checkUpdateAvailable") {
+        } else if (action == "checkUpdateAvailable") {
             Serial.println("🔍 Checking for OTA update availability...");
-    
             updateInfo inf = OTADRIVE.updateFirmwareInfo();
-    
-            Serial.print("ℹ️ Upgrade available: ");
-            Serial.println(inf.available ? "Yes" : "No");
-            Serial.print("📦 OTA version: ");
-            Serial.println(inf.version.c_str());
-    
+
+            SmartCore_EEPROM::saveUpgradeFlag(inf.available);
+
             DynamicJsonDocument response(512);
             response["type"] = "upgradeStatus";
-            response["serial"] = serialNumber;
+            response["serialNumber"] = serialNumber;
             response["available"] = inf.available;
             response["currentVersion"] = FW_VER;
             response["latestVersion"] = inf.available ? inf.version.c_str() : "N/A";
-    
-            if (!inf.available) {
-                response["message"] = "System is up to date.";
-            } else {
-                SmartCore_OTA::isUpgradeAvailable = true;
-                SmartCore_EEPROM::saveUpgradeFlag(true);
-                response["message"] = "Upgrade available.";
-            }
-    
+            response["message"] = inf.available ? "Upgrade available." : "System is up to date.";
+
             String responseJson;
             serializeJson(response, responseJson);
-    
-            if (mqttIsConnected) {
-                mqttClient.publish((String(mqttPrefix) + "/ota/status").c_str(), 0, false, responseJson.c_str());
+
+            if (mqttIsConnected && mqttClient) {
+                mqttClient->publish("module/upgrade", 0, false, responseJson.c_str());
             }
-    
-            #if WEBSERVER_ENABLED
-                ws.textAll(responseJson);
-            #endif
-    
             Serial.println("✅ OTA check response published.");
-        } 
-        else {
-            Serial.println("⚠️ Unsupported action in update message.");
+        } else {
+            Serial.println("⚠️ Unsupported action in upgrade message.");
         }
     }
 
@@ -409,8 +403,8 @@ namespace SmartCore_MQTT {
 
     void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
         mqttIsConnected = false;  // Update connection state
-        logMessage(LOG_WARN, "❌ Disconnected from MQTT (" + String((int)reason) + ")");
-        currentLEDMode = LEDMODE_DEBUG_PATTERN;
+        logMessage(LOG_WARN, "❌ Disconnected from MQTT (" + String((int)reason) + ", " + mqttDisconnectReasonToStr(reason) + ")");
+        currentLEDMode = LEDMODE_STATUS;
 
         if (metricsTaskHandle) {
             vTaskDelete(metricsTaskHandle);
@@ -423,50 +417,19 @@ namespace SmartCore_MQTT {
             timeSyncTaskHandle = nullptr;
             Serial.println("🛑 Time sync task stopped");
         }
-    
-        // Determine the flash pattern based on the disconnection reason
-        switch (reason) {
-            case AsyncMqttClientDisconnectReason::TLS_BAD_FINGERPRINT:
-                Serial.println("Bad fingerprint");
-                flashPattern = ".-";  // 1 short, 1 long flash
-                break;
-            case AsyncMqttClientDisconnectReason::TCP_DISCONNECTED:
-                Serial.println("TCP disconnected");
-                flashPattern = "..";  // 2 short flashes
-                break;
-            case AsyncMqttClientDisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION:
-                Serial.println("Unacceptable protocol version");
-                flashPattern = "...";  // 3 short flashes
-                break;
-            case AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED:
-                Serial.println("Identifier rejected");
-                flashPattern = "--";  // 2 long flashes
-                break;
-            case AsyncMqttClientDisconnectReason::MQTT_SERVER_UNAVAILABLE:
-                Serial.println("Server unavailable");
-                flashPattern = "-";  // 1 long flash
-                break;
-            case AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS:
-                Serial.println("Malformed credentials");
-                flashPattern = "-.";  // 1 long, 1 short flash
-                break;
-            case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED:
-                Serial.println("Not authorized");
-                flashPattern = "-..";  // 1 long, 2 short flashes
-                break;
-            case AsyncMqttClientDisconnectReason::ESP8266_NOT_ENOUGH_SPACE:
-                Serial.println("ESP8266 not enough space");
-                flashPattern = "-.-";  // 1 long, 1 short, 1 long flash
-                break;
-            default:
-                Serial.println("Unknown reason");
-                flashPattern = "--.";  // 2 long, 1 short flash for unknown error
-                break;
-        }
-    
-        // Signal that a new pattern is available
-        triggerFlashPattern(flashPattern, DEBUG_COLOR_YELLOW);
      
+    }
+
+    const char* mqttDisconnectReasonToStr(AsyncMqttClientDisconnectReason reason) {
+    switch (reason) {
+        case AsyncMqttClientDisconnectReason::TCP_DISCONNECTED: return "TCP_DISCONNECTED";
+        case AsyncMqttClientDisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION: return "UNACCEPTABLE_PROTOCOL_VERSION";
+        case AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED: return "IDENTIFIER_REJECTED";
+        case AsyncMqttClientDisconnectReason::MQTT_SERVER_UNAVAILABLE: return "SERVER_UNAVAILABLE";
+        case AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS: return "MALFORMED_CREDENTIALS";
+        case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED: return "NOT_AUTHORIZED";
+        default: return "UNKNOWN";
+    }
     }
 
     void metricsTask(void *parameter) {
@@ -518,7 +481,7 @@ namespace SmartCore_MQTT {
             char buffer[512];
             size_t len = serializeJson(doc, buffer);
 
-            mqttClient.publish("module/metrics", 0, false, buffer, len);
+            mqttClient->publish("module/metrics", 0, false, buffer, len);
             logMessage(LOG_INFO, "📤 Metrics sent → " + String(buffer));
 
             vTaskDelay(10000 / portTICK_PERIOD_MS);  // 10s loop
@@ -545,10 +508,26 @@ namespace SmartCore_MQTT {
         char payload[128];
         serializeJson(doc, payload, sizeof(payload));
     
-        mqttClient.publish("module/update", 1, false, payload);
+        mqttClient->publish("module/update", 1, false, payload);
         awaitingSmartboatTimeSync = true;
     
         Serial.println("📡 Time sync requested via module/update");
     }
+
+    void hardResetClient() {
+        if (mqttClient) {
+            mqttClient->onConnect(nullptr);
+            mqttClient->onDisconnect(nullptr);
+            mqttClient->onMessage(nullptr);
+            mqttClient->disconnect();
+            logMessage(LOG_INFO, "🔌 MQTT client: disconnect requested");
+            vTaskDelay(pdMS_TO_TICKS(150)); // Let the TCP stack catch up
+
+            delete mqttClient;
+            mqttClient = nullptr;
+            logMessage(LOG_INFO, "🗑️ MQTT client deleted.");
+        }
+    }
+
     
 }

@@ -24,9 +24,9 @@
 // =====================================
 
 SmartCoreSettings myModuleSettings = {
-    .serialNumber = "rel8XXXX",
-    .moduleName = "Smart Relay Controller",
-    .apSSID = "SB_relay_XXXX"  // change to module specific ssid
+    .serialNumber = "iledXXXX",
+    .moduleName = "Smart iled Controller",
+    .apSSID = "SB_iled_XXXX"  // change to module specific ssid
 };
 
 //////////////////////////////////////////////////////////////

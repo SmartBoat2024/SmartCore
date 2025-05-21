@@ -20,7 +20,7 @@ bool firstWiFiConnect = true;
 volatile bool provisioningComplete = false;
 
 // --- MQTT State ---
-AsyncMqttClient mqttClient;
+AsyncMqttClient* mqttClient = nullptr;
 bool awaitingSmartboatTimeSync = true;
 uint32_t smartBoatEpoch = 0;
 uint32_t smartBoatEpochSyncMillis = 0;

@@ -43,5 +43,3 @@ namespace SmartCore_System {
 #define buttonPin 0
 #endif
 
-
-

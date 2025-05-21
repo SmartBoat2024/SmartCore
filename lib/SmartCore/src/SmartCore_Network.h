@@ -22,7 +22,7 @@ extern bool firstWiFiConnect;
 extern volatile bool provisioningComplete;
 
 // --- MQTT Parameters ---
-extern AsyncMqttClient mqttClient;
+extern AsyncMqttClient* mqttClient;
 
 extern unsigned long lastMqttReconnectAttempt;
 extern unsigned long mqttReconnectInterval;

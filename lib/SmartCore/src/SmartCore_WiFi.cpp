@@ -172,6 +172,7 @@ namespace SmartCore_WiFi {
                 EEPROM.commit();
 
                 if (wifiFailCounter >= WIFI_FAIL_LIMIT_SAFE) {
+                    
                     logMessage(LOG_ERROR, "🚨 Too many WiFi boot fails! Entering Safe Mode for recovery.");
                     SmartCore_System::enterSafeMode();  // Reuse your robust Safe Mode recovery UI/task
                 } else {
@@ -220,24 +221,6 @@ namespace SmartCore_WiFi {
         while ((WiFi.localIP() == IPAddress(0,0,0,0)) && (tries++ < 20)) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
-    }
-
-    //SAFE CONNECT FOR RECOVERY
-    void startMinimalWifiSetup() {
-        logMessage(LOG_INFO, "🛟 Safe Mode: Starting minimal AP for recovery.");
-
-        WiFi.disconnect(true, true);
-        delay(100);
-        WiFi.mode(WIFI_AP);
-        String apSsid = String(SmartCore_System::getModuleSettings().apSSID) + "_RECOVERY";
-        WiFi.softAP(apSsid.c_str(), nullptr);
-        logMessage(LOG_INFO, "🛟 Safe Mode AP SSID: " + apSsid);
-
-        static AsyncWebServer safeServer(81);
-        // [ ... add simple HTML UI/handlers for "Clear EEPROM", "Reboot", "OTA", etc ... ]
-        safeServer.begin();
-
-        while (true) delay(1000); // Loop forever
     }
 
 }

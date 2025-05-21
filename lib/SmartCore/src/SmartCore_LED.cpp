@@ -1,9 +1,11 @@
 #include "SmartCore_LED.h"
 #include "SmartCore_Network.h"
+#include "SmartCore_System.h"
 #include "SmartCore_MQTT.h"
 #include "SmartCore_Log.h"
 #include "SmartCore_EEPROM.h"
 #include <WiFi.h>
+#include <cstdint>
 
 
 QueueHandle_t flashQueue;
@@ -11,10 +13,15 @@ SemaphoreHandle_t ledMutex = nullptr;
 TaskHandle_t flashLEDTaskHandle = nullptr;
 TaskHandle_t provisioningBlinkTaskHandle = nullptr;
 TaskHandle_t wifiMqttCheckTaskHandle = nullptr;
+TaskHandle_t recoveryTaskHandle = nullptr;
 volatile LEDMode currentLEDMode = LEDMODE_OFF;
 DebugColor currentDebugColor = DEBUG_COLOR_YELLOW;
 ProvisioningState currentProvisioningState = PROVISIONING_NONE;
 String flashPattern = "";
+
+void enterRecoveryMode(RecoveryType type);
+void recoveryTask(void *parameter);
+volatile bool inRecoveryMode = false;
 
 void initSmartCoreLED() {
     pinMode(RGB_r, OUTPUT);
@@ -39,7 +46,7 @@ void initSmartCoreLED() {
 
     xTaskCreatePinnedToCore(flashLEDTask, "Flash LED", 2048, NULL, 1, &flashLEDTaskHandle, 1);
     xTaskCreatePinnedToCore(provisioningBlinkTask, "Provision Blink", 2048, NULL, 1, &provisioningBlinkTaskHandle, 1);
-    xTaskCreatePinnedToCore(wifiMqttCheckTask,      "WiFi/MQTT Check",     2048, NULL, 1, &wifiMqttCheckTaskHandle,      0);
+    xTaskCreatePinnedToCore(wifiMqttCheckTask,      "WiFi/MQTT Check", 4096, NULL, 1, &wifiMqttCheckTaskHandle,      0);
 }
 
 void setRGBColor(uint8_t red, uint8_t green, uint8_t blue) {
@@ -146,13 +153,14 @@ void flashLEDTask(void *parameter) {
     }
 }
 
-    // Function to check WiFi and MQTT connection
     void wifiMqttCheckTask(void *parameter) {
-        static unsigned long lastWifiRetry = 0;
-        static unsigned long wifiRetryInterval = 10000;     // 10 seconds min
-        static unsigned long lastMqttRetry = 0;
-        static unsigned long mqttRetryInterval = 10000;     // 10 seconds min
-        const unsigned long maxBackoff = 300000;  
+        static int wifiFailCount = 0;
+        static int mqttFailCount = 0;
+        const int WIFI_FAIL_THRESHOLD = 8;
+        const int MQTT_FAIL_THRESHOLD = 8;
+        static unsigned long lastMqttAttempt = 0;
+        const unsigned long mqttRetryInterval = 10000;  //retry interval set to 10s to prevent excessive mqtt calls
+
         for (;;) {
             // 🚨 1. If we're not in STATUS mode, skip
             if (currentLEDMode != LEDMODE_STATUS) {
@@ -161,34 +169,42 @@ void flashLEDTask(void *parameter) {
                 continue;
             }
 
-            // 2a WiFi retry with exponential backoff
+            // --- WiFi fail check ---
             if (!resetConfig && WiFi.status() != WL_CONNECTED) {
-                unsigned long now = millis();
-                if (now - lastWifiRetry > wifiRetryInterval) {
-                    logMessage(LOG_INFO, "🔄 Attempting WiFi reconnect (interval: " + String(wifiRetryInterval) + " ms)...");
-                    String ssid = SmartCore_EEPROM::readStringFromEEPROM(WIFI_SSID_ADDR, 41);
-                    String pass = SmartCore_EEPROM::readStringFromEEPROM(WIFI_PASS_ADDR, 41);
-                    WiFi.begin(ssid.c_str(), pass.c_str());
-                    lastWifiRetry = now;
-                    wifiRetryInterval = min(wifiRetryInterval * 2, maxBackoff);
+                wifiFailCount++;
+                logMessage(LOG_WARN, String("[WiFiCheck] WiFi not connected. Fail count: ") + wifiFailCount + 
+                    " / " + WIFI_FAIL_THRESHOLD +
+                    (inRecoveryMode ? " (Recovery mode active, skipping enterRecoveryMode)" : ""));
+                if (wifiFailCount >= WIFI_FAIL_THRESHOLD && !inRecoveryMode) {
+                    logMessage(LOG_WARN, "[WiFiCheck] WiFi fail threshold reached, entering recovery mode (WiFi).");
+                    enterRecoveryMode(WIFI_RECOVERY);
+                    continue;
                 }
-            } else if (WiFi.status() == WL_CONNECTED && wifiRetryInterval != 10000) {
-                // Reset backoff after successful connection
-                wifiRetryInterval = 10000;
+            } else {
+                if (wifiFailCount > 0) logMessage(LOG_INFO, "[WiFiCheck] WiFi connected, fail count reset.");
+                wifiFailCount = 0;
             }
 
-            // 2b MQTT retry with exponential backoff
-            if (WiFi.status() == WL_CONNECTED && !mqttIsConnected) {
+            // --- MQTT fail check ---
+            if (WiFi.status() == WL_CONNECTED && !mqttIsConnected && !inRecoveryMode) {
+                mqttFailCount++;
+                logMessage(LOG_WARN, String("[MQTTCheck] MQTT not connected. Fail count: ") + mqttFailCount +
+                    " / " + MQTT_FAIL_THRESHOLD +
+                    (inRecoveryMode ? " (Recovery mode active, skipping enterRecoveryMode)" : ""));
                 unsigned long now = millis();
-                if (now - lastMqttRetry > mqttRetryInterval) {
-                    logMessage(LOG_INFO, "🔄 Attempting MQTT reconnect (interval: " + String(mqttRetryInterval) + " ms)...");
+                if (now - lastMqttAttempt > mqttRetryInterval) {
+                    logMessage(LOG_INFO, "[MQTTCheck] Attempting regular MQTT reconnect...");
                     SmartCore_MQTT::setupMQTTClient();
-                    lastMqttRetry = now;
-                    mqttRetryInterval = min(mqttRetryInterval * 2, maxBackoff);
+                    lastMqttAttempt = now;
                 }
-            } else if (mqttIsConnected && mqttRetryInterval != 10000) {
-                // Reset backoff after successful connection
-                mqttRetryInterval = 10000;
+                if (mqttFailCount >= MQTT_FAIL_THRESHOLD && !inRecoveryMode) {
+                    logMessage(LOG_WARN, "[MQTTCheck] MQTT fail threshold reached, entering recovery mode (MQTT).");
+                    enterRecoveryMode(MQTT_RECOVERY);
+                    continue;
+                }
+            } else {
+                if (mqttFailCount > 0) logMessage(LOG_INFO, "[MQTTCheck] MQTT connected, fail count reset.");
+                mqttFailCount = 0;
             }
 
             // ⚠️ 3. If a flash pattern is running, don't mess with LEDs
@@ -214,7 +230,6 @@ void flashLEDTask(void *parameter) {
                     logMessage(LOG_INFO, "🔵 LED: WiFi + MQTT connected");
                     setRGBColor(0, 0, 255);  // Blue
                 }
-
                 xSemaphoreGive(ledMutex);
             } else {
                 logMessage(LOG_WARN, "⚠️ Failed to take LED mutex in wifiMqttCheckTask");
@@ -224,6 +239,129 @@ void flashLEDTask(void *parameter) {
         }
     }
 
+    // ---- RECOVERY MODE ----
+    void enterRecoveryMode(RecoveryType type) {
+        logMessage(LOG_WARN, String("[Recovery] Entering recovery mode. Type: ") + (type == WIFI_RECOVERY ? "WiFi" : "MQTT"));
+        inRecoveryMode = true;
+
+        logMessage(LOG_INFO, "[Recovery] About to take LED mutex...");
+        if (xSemaphoreTake(ledMutex, pdMS_TO_TICKS(3000)) == pdTRUE) {
+            logMessage(LOG_INFO, "[Recovery] LED mutex acquired.");
+                setRGBColor(200, 0, 180);      // Purple - recoverry mode
+                xSemaphoreGive(ledMutex);
+            logMessage(LOG_INFO, "[Recovery] LED mutex released.");
+        } else {
+            logMessage(LOG_ERROR, "[Recovery] LED mutex take TIMEOUT!!! Something is holding the mutex.");
+        }
+
+        logMessage(LOG_INFO, "[Recovery] About to suspend tasks...");
+        if (!recoveryTaskHandle) {
+            logMessage(LOG_INFO, "[Recovery] Creating recovery task...");
+            xTaskCreatePinnedToCore(recoveryTask, "RecoveryTask", 4096, (void*)static_cast<uintptr_t>(type), 2, &recoveryTaskHandle, 1);
+        }
+        vTaskSuspend(flashLEDTaskHandle);
+        vTaskSuspend(provisioningBlinkTaskHandle);
+        if (xTaskGetCurrentTaskHandle() != wifiMqttCheckTaskHandle) {
+            vTaskSuspend(wifiMqttCheckTaskHandle);
+        } else {
+            logMessage(LOG_INFO, "[Recovery] Not suspending self!");
+        }
+
+        logMessage(LOG_INFO, String("[Recovery] Current recoveryTaskHandle: ") + (uintptr_t)recoveryTaskHandle);
+
+        // 2. Set LED to error code
+        if (xSemaphoreTake(ledMutex, 1000 / portTICK_PERIOD_MS) == pdTRUE) {
+            if (type == WIFI_RECOVERY) setRGBColor(255, 0, 0);      // Red
+            else if (type == MQTT_RECOVERY) setRGBColor(255, 60, 80); // Hot Pink
+            xSemaphoreGive(ledMutex);
+        } else {
+            logMessage(LOG_ERROR, "[Recovery] Could not take LED mutex! Mutex stuck or deadlocked.");
+        }
+
+        logMessage(LOG_WARN, String("[Recovery] Current recoveryTaskHandle: ") + (uintptr_t)recoveryTaskHandle);
+
+
+        // 3. Start recovery task if not already running
+        if (!recoveryTaskHandle) {
+            logMessage(LOG_INFO, "[Recovery] Creating recovery task...");
+            xTaskCreatePinnedToCore(recoveryTask, "RecoveryTask", 4096, (void*)static_cast<uintptr_t>(type), 2, &recoveryTaskHandle, 1);
+        } else {
+            logMessage(LOG_WARN, "[Recovery] Recovery task already running, skipping.");
+        }
+    }
+
+    void recoveryTask(void *parameter) {
+        RecoveryType type = static_cast<RecoveryType>(reinterpret_cast<uintptr_t>(parameter));
+        int attempts = 0;
+        const int maxAttempts = 10;
+        bool recovered = false;
+
+        logMessage(LOG_INFO, String("[RecoveryTask] Starting recovery. Type: ") + (type == WIFI_RECOVERY ? "WiFi" : "MQTT"));
+        while (attempts < maxAttempts && !recovered) {
+            attempts++;
+            logMessage(LOG_INFO, String("[RecoveryTask] Attempt ") + attempts + " of " + maxAttempts);
+
+            if (type == WIFI_RECOVERY) {
+                logMessage(LOG_WARN, "[RecoveryTask] Resetting WiFi stack...");
+                WiFi.disconnect(true);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                WiFi.mode(WIFI_OFF);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                WiFi.mode(WIFI_STA);
+                vTaskDelay(pdMS_TO_TICKS(1500));
+
+                // Read from EEPROM or config as needed
+                String ssid = SmartCore_EEPROM::readStringFromEEPROM(WIFI_SSID_ADDR, 41);
+                String pass = SmartCore_EEPROM::readStringFromEEPROM(WIFI_PASS_ADDR, 41);
+                logMessage(LOG_INFO, String("[RecoveryTask] Trying to connect to SSID: ") + ssid);
+                WiFi.begin(ssid.c_str(), pass.c_str());
+
+                // Wait up to 15 seconds for connect
+                for (int i = 0; i < 15; ++i) {
+                    if (WiFi.status() == WL_CONNECTED) {
+                        logMessage(LOG_INFO, "[RecoveryTask] WiFi connected!");
+                        recovered = true;
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                }
+            } else if (type == MQTT_RECOVERY) {
+                logMessage(LOG_WARN, "[RecoveryTask] Hard resetting MQTT client...");
+                SmartCore_MQTT::hardResetClient(); // implement this!
+                SmartCore_MQTT::setupMQTTClient();
+
+                // Wait for connection
+                for (int i = 0; i < 10; ++i) {
+                    if (mqttIsConnected) {
+                        logMessage(LOG_INFO, "[RecoveryTask] MQTT connected!");
+                        recovered = true;
+                        break;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                }
+            }
+
+            // If not recovered, wait a minute before next attempt
+            if (!recovered) {
+                logMessage(LOG_WARN, "[RecoveryTask] Recovery attempt failed, waiting 1 min before retry...");
+                vTaskDelay(pdMS_TO_TICKS(60000)); // 1 min
+            }
+        }
+
+        if (recovered) {
+            logMessage(LOG_INFO, "[RecoveryTask] Recovery successful, resuming normal operation.");
+            // Resume tasks
+            vTaskResume(flashLEDTaskHandle);
+            vTaskResume(provisioningBlinkTaskHandle);
+            vTaskResume(wifiMqttCheckTaskHandle);
+            inRecoveryMode = false;
+            recoveryTaskHandle = nullptr;
+            vTaskDelete(NULL); // End recovery task
+        } else {
+            logMessage(LOG_WARN, "[RecoveryTask] Recovery failed. Entering safe mode.");
+            SmartCore_System::enterSafeMode(); // Or call ESP.restart()
+        }
+    }
 
   void provisioningBlinkTask(void *parameter) {
     for (;;) {

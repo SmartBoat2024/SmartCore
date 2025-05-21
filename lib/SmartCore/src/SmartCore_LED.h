@@ -34,6 +34,7 @@ extern SemaphoreHandle_t ledMutex;
 extern TaskHandle_t flashLEDTaskHandle;
 extern TaskHandle_t provisioningBlinkTaskHandle;
 extern TaskHandle_t wifiMqttCheckTaskHandle;
+extern TaskHandle_t recoveryTaskHandle;
 
 // LED control mode enum
 enum LEDMode {
@@ -56,6 +57,8 @@ enum ProvisioningState {
     PROVISIONING_SMARTCONNECT
 };
 
+enum RecoveryType { WIFI_RECOVERY, MQTT_RECOVERY };
+
 extern volatile LEDMode currentLEDMode;
 extern DebugColor currentDebugColor;
 extern ProvisioningState currentProvisioningState;
@@ -71,4 +74,6 @@ void turnOffRGBLEDs();
 void setLEDMode(LEDMode mode);
 void wifiMqttCheckTask(void *parameter);
 void setFailedWiFiCredsTask(void *parameter);
+
+extern volatile bool inRecoveryMode;
 

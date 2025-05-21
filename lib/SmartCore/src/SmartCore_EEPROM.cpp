@@ -195,6 +195,7 @@ namespace SmartCore_EEPROM {
         // --- Flags
         resetConfig = true;
         writeResetConfigFlag(true);
+        saveUpgradeFlag(false);
         
         wifiSetupComplete = false;
         writeBoolToEEPROM(WIFI_SETUP_COMPLETE_ADDR, false);
