@@ -13,4 +13,5 @@ namespace SmartCore_WiFi {
     void waitForValidIP();    // Save settings + restart
     void startNetworkServices(bool mqttRequired); //start mqtt, smartNet and webserver
     void startMinimalWifiSetup();
+    void startRecoveryServer();
 }

@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "SmartCore_MQTT.h"
 
-void handleModuleSpecificConfig(const String& message) {
+void handleModuleSpecificConfig(const JsonObject& doc) {
     Serial.println("📦 [Template] handleModuleSpecificConfig() called.");
     // TODO: Add configuration-specific logic here
 }

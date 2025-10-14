@@ -12,8 +12,17 @@
 #include <otadrive_esp.h>
 #include "mqtt_handlers.h"
 #include "SmartCore_OTA.h"
+#include "esp_task_wdt.h"
 
 namespace SmartCore_MQTT {
+
+    String mqttConfigMessageBuffer;
+    String mqttErrorsMessageBuffer;
+    String mqttModuleMessageBuffer;
+    String mqttResetMessageBuffer;
+    String mqttUpgradeMessageBuffer;
+    String mqttUpdateMessageBuffer;
+
     char mqttWillTopic[64];
     TaskHandle_t metricsTaskHandle = NULL;
     TaskHandle_t timeSyncTaskHandle = NULL;
@@ -178,44 +187,52 @@ namespace SmartCore_MQTT {
     }
 
     void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-        // ✅ Safely copy the payload into a null-terminated buffer
-        char safePayload[len + 1];
-        memcpy(safePayload, payload, len);
-        safePayload[len] = '\0';
-    
-        String message = String(safePayload);
-        Serial.printf("📨 MQTT Message on [%s]: %s\n", topic, message.c_str());
-    
-        // 🔄 Use full topic string directly (no mqttPrefix check)
-        String topicStr = String(topic);
-    
-        // 🔍 Check for expected topic like: rel80003/config
-        String expectedConfigTopic = String(serialNumber) + "/config";
-        String expectedErrorsTopic = String(serialNumber) + "/errors";
-        String expectedModuleTopic = String(serialNumber) + "/module";
-        String expectedResetTopic  = String(serialNumber) + "/reset";
-        String expectedUpgradeTopic = String(serialNumber) + "/upgrade";
-        String expectedUpdateTopic = String(serialNumber) + "/update";
-    
-        if (topicStr == expectedConfigTopic) {
-            handleConfigMessage(message);
-        } else if (topicStr == expectedErrorsTopic) {
-            handleErrorMessage(message);
-        } else if (topicStr == expectedModuleTopic) {
-            handleModuleMessage(message);
-        } else if (topicStr == expectedResetTopic) {
-            handleResetMessage(message);
-        } else if (topicStr == expectedUpgradeTopic) {
-            handleUpgradeMessage(message);
-        } else if (topicStr == expectedUpdateTopic) {
-            handleUpdateMessage(message);
-        } else {
-            Serial.printf("❓ Unknown subtopic on [%s]\n", topicStr.c_str());
+    String topicStr = String(topic);
+
+    // Choose buffer based on topic for safety (or use a single buffer if only one at a time)
+    String* buffer = nullptr;
+    String expectedConfigTopic  = String(serialNumber) + "/config";
+    String expectedErrorsTopic  = String(serialNumber) + "/errors";
+    String expectedModuleTopic  = String(serialNumber) + "/module";
+    String expectedResetTopic   = String(serialNumber) + "/reset";
+    String expectedUpgradeTopic = String(serialNumber) + "/upgrade";
+    String expectedUpdateTopic  = String(serialNumber) + "/update";
+
+    if      (topicStr == expectedConfigTopic)   buffer = &mqttConfigMessageBuffer;
+    else if (topicStr == expectedErrorsTopic)   buffer = &mqttErrorsMessageBuffer;
+    else if (topicStr == expectedModuleTopic)   buffer = &mqttModuleMessageBuffer;
+    else if (topicStr == expectedResetTopic)    buffer = &mqttResetMessageBuffer;
+    else if (topicStr == expectedUpgradeTopic)  buffer = &mqttUpgradeMessageBuffer;
+    else if (topicStr == expectedUpdateTopic)   buffer = &mqttUpdateMessageBuffer;
+
+    if (buffer) {
+        // New message? Clear the buffer
+        if (index == 0) buffer->clear();
+
+        // Append this chunk (handle null terminator yourself)
+        buffer->concat(String(payload).substring(0, len));
+
+        // If we have the whole message
+        if ((index + len) == total) {
+            Serial.printf("📨 MQTT Message on [%s] (assembled %d bytes): %s\n", topic, buffer->length(), buffer->c_str());
+
+            // Now call the right handler
+            if      (buffer == &mqttConfigMessageBuffer)   handleConfigMessage(*buffer);
+            else if (buffer == &mqttErrorsMessageBuffer)   handleErrorMessage(*buffer);
+            else if (buffer == &mqttModuleMessageBuffer)   handleModuleMessage(*buffer);
+            else if (buffer == &mqttResetMessageBuffer)    handleResetMessage(*buffer);
+            else if (buffer == &mqttUpgradeMessageBuffer)  handleUpgradeMessage(*buffer);
+            else if (buffer == &mqttUpdateMessageBuffer)   handleUpdateMessage(*buffer);
+
+            buffer->clear(); // ready for next message
         }
+    } else {
+        Serial.printf("❓ Unknown subtopic on [%s]\n", topicStr.c_str());
     }
+}
 
     void handleConfigMessage(const String& message) {
-        StaticJsonDocument<1024> doc;
+        DynamicJsonDocument doc(4096);  // Heap allocation, much safer!
         DeserializationError error = deserializeJson(doc, message);
     
         if (error) {
@@ -240,6 +257,8 @@ namespace SmartCore_MQTT {
             mqttClient->publish("module/config/update", 1, true, payload.c_str());
     
             Serial.println("✅ Published generic module config");
+
+            handleModuleSpecificConfig(doc.as<JsonObject>());
         }
     
         else if (type == "setConfig") {
@@ -272,8 +291,9 @@ namespace SmartCore_MQTT {
         }
 
         // ✅ Route all types (including setModuleConfig) to module-specific handler
-        if (type == "getConfig" || type == "setConfig" || type == "setModuleConfig") {
-            handleModuleSpecificConfig(message);
+        //if (type == "getConfig" || type == "setConfig" || type == "setModuleConfig") {
+        else if (type == "setModuleConfig") {
+            handleModuleSpecificConfig(doc.as<JsonObject>());
         }
     
         else {
@@ -433,6 +453,7 @@ namespace SmartCore_MQTT {
     }
 
     void metricsTask(void *parameter) {
+        // esp_task_wdt_add(NULL); 
         logMessage(LOG_INFO, "📊 Metrics task started.");
 
         // Simulate a crash during startup
@@ -456,6 +477,7 @@ namespace SmartCore_MQTT {
         for (;;) {
             if (!mqttIsConnected) {
                 logMessage(LOG_INFO, "🛑 Metrics task exiting — MQTT disconnected.");
+                //esp_task_wdt_delete(NULL);
                 vTaskDelete(nullptr);
             }
 

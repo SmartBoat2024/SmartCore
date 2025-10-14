@@ -239,10 +239,10 @@ namespace SmartCore_SmartNet {
         uint32_t lastHeartbeat = millis();  // ⏱️ Start from now to avoid instant send
     
         while (true) {
-            handleIncoming();     // 📥 Process incoming CAN messages
+            //handleIncoming();     // 📥 Process incoming CAN messages
     
             if (millis() - lastHeartbeat >= 1000) {
-                sendHeartbeat();  // ❤️ Send heartbeat every second
+                //sendHeartbeat();  // ❤️ Send heartbeat every second
                 
                 // 🧠 Runtime liveness confirmed
                 SmartCore_System::clearCrashCounter(CRASH_COUNTER_RUNTIME);

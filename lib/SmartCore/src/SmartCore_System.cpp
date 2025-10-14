@@ -94,7 +94,7 @@ namespace SmartCore_System {
         // 💥 Trigger logic based on counter
         if (crashCounter >= CRASH_LIMIT_SAFE || runtimeCrashCounter >= CRASH_LIMIT_SAFE) {
             logMessage(LOG_ERROR, "🚨 Crash limit exceeded! Entering Safe Mode...");
-            enterSafeMode();  // You’ll implement this next
+            //enterSafeMode(); 
         }
         else if (crashCounter >= CRASH_LIMIT_RESET || runtimeCrashCounter >= CRASH_LIMIT_RESET) {
             logMessage(LOG_WARN, "⚠️ Crash count hit reset threshold. Resetting parameters...");
@@ -110,6 +110,8 @@ namespace SmartCore_System {
         if (!LittleFS.begin()) {
            logMessage(LOG_ERROR, "❌ LittleFS mount failed!");
             while (true) yield();
+        }else {
+            logMessage(LOG_WARN, "✅  LittleFS mounted sucessfully!");
         }
         
         xTaskCreatePinnedToCore(checkresetButtonTask,   "Check Reset Button",  4096, NULL, 1, &resetButtonTaskHandle,        0);
@@ -117,11 +119,11 @@ namespace SmartCore_System {
         SmartCore_I2C::init();
         SmartCore_MCP::init();
         //  SmartNet init + task
-        if (SmartCore_SmartNet::initSmartNet()) {
+       // if (SmartCore_SmartNet::initSmartNet()) {
             xTaskCreatePinnedToCore(SmartCore_SmartNet::smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &SmartCore_SmartNet::smartNetTaskHandle, 1);
-        } else {
+      /*  } else {
             logMessage(LOG_ERROR, "❌ Failed to initialize SmartNet CAN bus");
-        }
+        }*/
         SmartCore_WiFi::startWiFiProvisionTask();
         
     }

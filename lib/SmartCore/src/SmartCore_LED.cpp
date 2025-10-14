@@ -4,6 +4,7 @@
 #include "SmartCore_MQTT.h"
 #include "SmartCore_Log.h"
 #include "SmartCore_EEPROM.h"
+#include "SmartCore_Wifi.h"
 #include <WiFi.h>
 #include <cstdint>
 
@@ -46,7 +47,7 @@ void initSmartCoreLED() {
 
     xTaskCreatePinnedToCore(flashLEDTask, "Flash LED", 2048, NULL, 1, &flashLEDTaskHandle, 1);
     xTaskCreatePinnedToCore(provisioningBlinkTask, "Provision Blink", 2048, NULL, 1, &provisioningBlinkTaskHandle, 1);
-    xTaskCreatePinnedToCore(wifiMqttCheckTask,      "WiFi/MQTT Check", 4096, NULL, 1, &wifiMqttCheckTaskHandle,      0);
+    //xTaskCreatePinnedToCore(wifiMqttCheckTask,      "WiFi/MQTT Check", 4096, NULL, 1, &wifiMqttCheckTaskHandle,      0);
 }
 
 void setRGBColor(uint8_t red, uint8_t green, uint8_t blue) {
@@ -153,91 +154,101 @@ void flashLEDTask(void *parameter) {
     }
 }
 
-    void wifiMqttCheckTask(void *parameter) {
-        static int wifiFailCount = 0;
-        static int mqttFailCount = 0;
-        const int WIFI_FAIL_THRESHOLD = 8;
-        const int MQTT_FAIL_THRESHOLD = 8;
-        static unsigned long lastMqttAttempt = 0;
-        const unsigned long mqttRetryInterval = 10000;  //retry interval set to 10s to prevent excessive mqtt calls
+ void wifiMqttCheckTask(void *parameter) {
+    static int wifiFailCount = 0;
+    static int mqttFailCount = 0;
+    static bool recoveryServerStarted = false;
 
-        for (;;) {
-            // 🚨 1. If we're not in STATUS mode, skip
-            if (currentLEDMode != LEDMODE_STATUS) {
-                logMessage(LOG_INFO, "⏳ LED mode is not STATUS (mode = " + String(currentLEDMode) + "), skipping LED update.");
-                vTaskDelay(5000 / portTICK_PERIOD_MS);
-                continue;
-            }
+    const int WIFI_FAIL_THRESHOLD = 8;
+    const int MQTT_FAIL_THRESHOLD = 8;
+    const unsigned long mqttRetryInterval = 10000;
+    static unsigned long lastMqttAttempt = 0;
+    static unsigned long firstWifiFailTime = 0;
 
-            // --- WiFi fail check ---
-            if (!resetConfig && WiFi.status() != WL_CONNECTED) {
-                wifiFailCount++;
-                logMessage(LOG_WARN, String("[WiFiCheck] WiFi not connected. Fail count: ") + wifiFailCount + 
-                    " / " + WIFI_FAIL_THRESHOLD +
-                    (inRecoveryMode ? " (Recovery mode active, skipping enterRecoveryMode)" : ""));
-                if (wifiFailCount >= WIFI_FAIL_THRESHOLD && !inRecoveryMode) {
-                    logMessage(LOG_WARN, "[WiFiCheck] WiFi fail threshold reached, entering recovery mode (WiFi).");
-                    enterRecoveryMode(WIFI_RECOVERY);
-                    continue;
-                }
-            } else {
-                if (wifiFailCount > 0) logMessage(LOG_INFO, "[WiFiCheck] WiFi connected, fail count reset.");
-                wifiFailCount = 0;
-            }
-
-            // --- MQTT fail check ---
-            if (WiFi.status() == WL_CONNECTED && !mqttIsConnected && !inRecoveryMode) {
-                mqttFailCount++;
-                logMessage(LOG_WARN, String("[MQTTCheck] MQTT not connected. Fail count: ") + mqttFailCount +
-                    " / " + MQTT_FAIL_THRESHOLD +
-                    (inRecoveryMode ? " (Recovery mode active, skipping enterRecoveryMode)" : ""));
-                unsigned long now = millis();
-                if (now - lastMqttAttempt > mqttRetryInterval) {
-                    logMessage(LOG_INFO, "[MQTTCheck] Attempting regular MQTT reconnect...");
-                    SmartCore_MQTT::setupMQTTClient();
-                    lastMqttAttempt = now;
-                }
-                if (mqttFailCount >= MQTT_FAIL_THRESHOLD && !inRecoveryMode) {
-                    logMessage(LOG_WARN, "[MQTTCheck] MQTT fail threshold reached, entering recovery mode (MQTT).");
-                    enterRecoveryMode(MQTT_RECOVERY);
-                    continue;
-                }
-            } else {
-                if (mqttFailCount > 0) logMessage(LOG_INFO, "[MQTTCheck] MQTT connected, fail count reset.");
-                mqttFailCount = 0;
-            }
-
-            // ⚠️ 3. If a flash pattern is running, don't mess with LEDs
-            if ((flashQueue && uxQueueMessagesWaiting(flashQueue) > 0) || currentLEDMode != LEDMODE_STATUS) {
-                logMessage(LOG_INFO, "⏳ LED update skipped — pattern running or mode not STATUS");
-                logMessage(LOG_INFO, "🧮 Queue count: " + String(uxQueueMessagesWaiting(flashQueue)) + ", LED mode: " + String(currentLEDMode));
-                vTaskDelay(5000 / portTICK_PERIOD_MS);
-                continue;
-            }
-
-            // ✅ 4. Proceed to update LED based on current state
-            if (xSemaphoreTake(ledMutex, portMAX_DELAY) == pdTRUE) {
-                if (resetConfig) {
-                    logMessage(LOG_INFO, "🟢 LED: Reset Config Mode");
-                    setRGBColor(0, 255, 0);  // Green
-                } else if (WiFi.status() != WL_CONNECTED) {
-                    logMessage(LOG_INFO, "🔴 LED: No WiFi");
-                    setRGBColor(255, 0, 0);  // Red
-                } else if (!mqttIsConnected) {
-                    logMessage(LOG_INFO, "💗 LED: WiFi OK, MQTT not connected");
-                    setRGBColor(255, 60, 80);  // Hot Pink
-                } else {
-                    logMessage(LOG_INFO, "🔵 LED: WiFi + MQTT connected");
-                    setRGBColor(0, 0, 255);  // Blue
-                }
-                xSemaphoreGive(ledMutex);
-            } else {
-                logMessage(LOG_WARN, "⚠️ Failed to take LED mutex in wifiMqttCheckTask");
-            }
-
+    for (;;) {
+        // 🚨 Skip if not in STATUS mode
+        if (currentLEDMode != LEDMODE_STATUS) {
             vTaskDelay(5000 / portTICK_PERIOD_MS);
+            continue;
         }
+
+        // ─── WiFi Check ─────────────────────────────
+        if (!resetConfig && WiFi.status() != WL_CONNECTED) {
+            if (wifiFailCount == 0) {
+                firstWifiFailTime = millis();
+            }
+
+            wifiFailCount++;
+            WiFi.setTxPower(WIFI_POWER_8_5dBm);
+
+            logMessage(LOG_WARN, "[WiFiCheck] WiFi not connected. Fail count: " + String(wifiFailCount) + " / " + WIFI_FAIL_THRESHOLD);
+
+            // ➤ If we've failed for over 15 minutes, start recovery
+            if (!recoveryServerStarted && millis() - firstWifiFailTime >= 15 * 60 * 1000UL) {
+                logMessage(LOG_WARN, "🚨 WiFi not connected for 15 mins → Starting Recovery Server (AP mode)");
+                WiFi.disconnect(true, true);
+                WiFi.mode(WIFI_AP);
+                WiFi.softAP("SmartBoat_RECOVERY", nullptr);
+                setLEDMode(LEDMODE_WAITING);
+
+                SmartCore_WiFi::startRecoveryServer();
+                recoveryServerStarted = true;
+
+                // 💤 Wait 10 minutes then restart
+                vTaskDelay(pdMS_TO_TICKS(10 * 60 * 1000UL));
+                logMessage(LOG_WARN, "🕰️ 10 mins passed, rebooting to retry stored WiFi creds...");
+                WiFi.disconnect(true, true);
+                ESP.restart();
+            }
+        } else {
+            if (wifiFailCount > 0) logMessage(LOG_INFO, "[WiFiCheck] WiFi connected. Resetting fail counter.");
+            wifiFailCount = 0;
+            firstWifiFailTime = 0;
+        }
+
+        // ─── MQTT Check ─────────────────────────────
+        if (WiFi.status() == WL_CONNECTED && !mqttIsConnected) {
+            mqttFailCount++;
+            logMessage(LOG_WARN, "[MQTTCheck] MQTT not connected. Fail count: " + String(mqttFailCount) + " / " + MQTT_FAIL_THRESHOLD);
+
+            unsigned long now = millis();
+            if (now - lastMqttAttempt > mqttRetryInterval) {
+                logMessage(LOG_INFO, "[MQTTCheck] Attempting regular MQTT reconnect...");
+                SmartCore_MQTT::setupMQTTClient();
+                lastMqttAttempt = now;
+            }
+
+            if (mqttFailCount >= MQTT_FAIL_THRESHOLD) {
+                logMessage(LOG_WARN, "[MQTTCheck] MQTT fail threshold reached — ignoring further retries for now.");
+                // Optionally trigger alert LED or retry after a longer interval
+            }
+        } else {
+            if (mqttFailCount > 0) logMessage(LOG_INFO, "[MQTTCheck] MQTT connected. Resetting fail counter.");
+            mqttFailCount = 0;
+        }
+
+        // ─── LED Status Update ──────────────────────
+        if ((flashQueue && uxQueueMessagesWaiting(flashQueue) > 0) || currentLEDMode != LEDMODE_STATUS) {
+            vTaskDelay(5000 / portTICK_PERIOD_MS);
+            continue;
+        }
+
+        if (xSemaphoreTake(ledMutex, portMAX_DELAY) == pdTRUE) {
+            if (resetConfig) {
+                setRGBColor(0, 255, 0);  // Green
+            } else if (WiFi.status() != WL_CONNECTED) {
+                setRGBColor(255, 0, 0);  // Red
+            } else if (!mqttIsConnected) {
+                setRGBColor(255, 60, 80);  // Hot Pink
+            } else {
+                setRGBColor(0, 0, 255);  // Blue
+            }
+            xSemaphoreGive(ledMutex);
+        }
+
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
+}
 
     // ---- RECOVERY MODE ----
     void enterRecoveryMode(RecoveryType type) {

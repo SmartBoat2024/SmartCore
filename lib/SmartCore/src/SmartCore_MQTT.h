@@ -5,6 +5,13 @@
 
 namespace SmartCore_MQTT {
 
+extern String mqttConfigMessageBuffer;
+extern String mqttErrorsMessageBuffer;
+extern String mqttModuleMessageBuffer;
+extern String mqttResetMessageBuffer;
+extern String mqttUpgradeMessageBuffer;
+extern String mqttUpdateMessageBuffer;
+
 extern TaskHandle_t metricsTaskHandle;
 extern TaskHandle_t timeSyncTaskHandle;
 void setupMQTTClient();
