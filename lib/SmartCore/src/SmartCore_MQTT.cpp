@@ -1,6 +1,7 @@
 #include "SmartCore_MQTT.h"
 #include <arduino.h>
 #include <AsyncMqttClient.h>
+#include <HTTPClient.h>
 #include "SmartCore_Network.h"
 #include "SmartCore_LED.h"
 #include "SmartCore_EEPROM.h"
@@ -12,17 +13,16 @@
 #include <otadrive_esp.h>
 #include "mqtt_handlers.h"
 #include "SmartCore_OTA.h"
-#include "esp_task_wdt.h"
 
-namespace SmartCore_MQTT {
-
-    String mqttConfigMessageBuffer;
-    String mqttErrorsMessageBuffer;
-    String mqttModuleMessageBuffer;
-    String mqttResetMessageBuffer;
-    String mqttUpgradeMessageBuffer;
-    String mqttUpdateMessageBuffer;
-
+namespace SmartCore_MQTT
+{
+    String pendingBrokerIP = "";
+    uint16_t pendingBrokerPort = 0;
+    bool mqttFailoverAckReceived;
+    bool failoverInProgress = false;
+    int currentPriorityIndex = 0;
+    String currentBrokerIP = "";
+    uint16_t currentBrokerPort = 1883;
     char mqttWillTopic[64];
     TaskHandle_t metricsTaskHandle = NULL;
     TaskHandle_t timeSyncTaskHandle = NULL;
@@ -32,94 +32,366 @@ namespace SmartCore_MQTT {
     static std::function<void(bool)> mqttConnectCallback = SmartCore_MQTT::onMqttConnect;
     static std::function<void(AsyncMqttClientDisconnectReason)> mqttDisconnectCallback = SmartCore_MQTT::onMqttDisconnect;
 
-
-    void generateMqttPrefix() {
+    void generateMqttPrefix()
+    {
         // Set mqttPrefix based on the first 4 chars of serialNumber
         strncpy(mqttPrefix, serialNumber, 4);
-        mqttPrefix[4] = '\0';  // Ensure null-termination
-    
+        mqttPrefix[4] = '\0'; // Ensure null-termination
+
         // Build the mqttWillTopic from the prefix
         snprintf(mqttWillTopic, sizeof(mqttWillTopic), "%s/disconnected", mqttPrefix);
-        mqttWillTopic[sizeof(mqttWillTopic) - 1] = '\0';  // Safety null-termination
-    
+        mqttWillTopic[sizeof(mqttWillTopic) - 1] = '\0'; // Safety null-termination
+
         // Debugging
         logMessage(LOG_INFO, "🧠 MQTT prefix: " + String(mqttPrefix));
         logMessage(LOG_INFO, "🧠 MQTT will topic: " + String(mqttWillTopic));
-    
     }
 
-    void setupMQTTClient() {
-        logMessage(LOG_INFO, "🔧 Configuring MQTT...");
-        generateMqttPrefix();  // Also sets mqttWillTopic internally
+    void setupMQTTClient(const String &ip, uint16_t port)
+    {
+        logMessage(LOG_INFO, "🔧 Configuring MQTT client for " + ip + ":" + String(port));
 
-        if (mqttClient) delete mqttClient;
-        
+        generateMqttPrefix(); // sets mqttWillTopic
+
+        // Clean previous instance
+        if (mqttClient)
+            delete mqttClient;
+
         mqttClient = new AsyncMqttClient();
-    
-        // Set up callbacks and keepalive
+
+        // --- Callbacks ---
         mqttClient->onConnect(onMqttConnect);
         mqttClient->onDisconnect(onMqttDisconnect);
         mqttClient->onMessage(onMqttMessage);
+
         mqttClient->setKeepAlive(15);
+
+        // Client ID = MAC without colons
         String clientId = WiFi.macAddress();
-        clientId.replace(":", "");  // optional: clean format (e.g., AABBCCDDEEFF)
+        clientId.replace(":", "");
         mqttClient->setClientId(clientId.c_str());
-    
-        // Configure Will
-        mqttClient->setWill(mqttWillTopic, 1, true, serialNumber, strlen(serialNumber));
-        logMessage(LOG_INFO, "🧠 MQTT will topic: " + String(mqttWillTopic));
-        logMessage(LOG_INFO, "🧠 MQTT will payload: " + String(serialNumber));
-        logMessage(LOG_INFO, "🧠 MQTT will configured using setWill().");
-    
-        // Determine MQTT server & port
-        String mqttIp = SmartCore_EEPROM::readStringFromEEPROM(MQTT_IP_ADDR, 40);   // Use your actual max len
-        String mqttPortStr = SmartCore_EEPROM::readStringFromEEPROM(MQTT_PORT_ADDR, 6);
-        int mqttPort = mqttPortStr.toInt();
 
-        strncpy(mqtt_server, mqttIp.c_str(), sizeof(mqtt_server) - 1);
-        mqtt_server[sizeof(mqtt_server) - 1] = '\0';
-        String resolvedServer = mqtt_server;
-        int resolvedPort = mqttPort;
+        // Will
+        mqttClient->setWill(
+            mqttWillTopic,
+            1,
+            true,
+            serialNumber,
+            strlen(serialNumber));
 
-        logMessage(LOG_INFO, "➡️  Inferred MQTT IP: " + resolvedServer);
-       
-    
-        // Final configuration
-        mqttClient->setServer(mqtt_server, (uint16_t)resolvedPort);
-        logMessage(LOG_INFO, "📡 MQTT server set to: " + String(resolvedServer));
-        logMessage(LOG_INFO, "📟 MQTT port set to: " + String(resolvedPort));
-    
-        // Connect if WiFi is ready
-        if (WiFi.status() == WL_CONNECTED) {
-            logMessage(LOG_INFO, "🔗 WiFi connected. Attempting MQTT connection...");
-            Serial.print("📣 [DEBUG] Attempting connection to: ");
-            Serial.print(resolvedServer);
-            Serial.print(":");
-            Serial.println(resolvedPort);
-    
-            Serial.print("📶 WiFi status: ");
-            Serial.println(WiFi.status());
-    
-            Serial.print("🧠 MQTT is connected: ");
-            Serial.println(mqttClient->connected() ? "yes" : "no");
+        // Store new target
+        currentBrokerIP = ip;
+        currentBrokerPort = port;
 
-            Serial.println("== MQTT Configuration ==");
-            Serial.print("Client ID: "); Serial.println(clientId);
-            Serial.print("Will topic: "); Serial.println(mqttWillTopic);
-            Serial.print("Will payload: "); Serial.println(serialNumber);
-            Serial.print("Server: "); Serial.println(mqtt_server);
-            Serial.print("Port: "); Serial.println(resolvedPort);
-    
-            mqttClient->connect();
-        }  else {
-            logMessage(LOG_WARN, "📶 WiFi not connected, skipping MQTT connect.");
+        // Set server
+        mqttClient->setServer(currentBrokerIP.c_str(), currentBrokerPort);
+
+        // WiFi check
+        if (WiFi.status() != WL_CONNECTED)
+        {
+            logMessage(LOG_WARN, "📶 WiFi not connected → skipping MQTT connect.");
+            return;
         }
+
+        // Attempt connection ONCE
+        mqttClient->connect();
+
+        // Optional: minimal blocking wait
+        unsigned long start = millis();
+        while (!mqttClient->connected() && millis() - start < 3000)
+            delay(50);
+
+        if (mqttClient->connected())
+            logMessage(
+                LOG_INFO,
+                String("✅ MQTT connected to ") +
+                    currentBrokerIP +
+                    ":" +
+                    String(currentBrokerPort));
+        else
+            logMessage(LOG_WARN, String("❌ MQTT connect FAILED to ") + currentBrokerIP + ":" + String(currentBrokerPort));
     }
 
-    void onMqttConnect(bool sessionPresent) {
+    // ======================================================================================
+    //  MQTT FAILOVER ENGINE — SmartModules + SmartBox Cluster Logic
+    // ======================================================================================
+    //
+    //  This function is the *heart* of SmartBoat’s MQTT resilience system.
+    //  It is called ONLY after repeated MQTT connection failures inside the
+    //  wifiMqttCheckTask(). (mqttFailCount > 10)
+    //
+    // --------------------------------------------------------------------------------------
+    //  PURPOSE
+    // --------------------------------------------------------------------------------------
+    //
+    //   • Rotate to the next MQTT broker in the priority list.
+    //   • Handle normal SmartModule failover (simple + fast).
+    //   • Handle SmartBox-aware failover (cluster logic).
+    //   • Notify the Raspberry Pi (SmartBox core) over UART:
+    //        → Become Primary     (enable Mosquitto + switch Node-RED to localhost)
+    //        → Switch Broker      (tell Pi to use another SmartBox broker IP)
+    //
+    //   • Apply new broker IP/port only after ACK from Pi (cluster coherence).
+    //
+    // --------------------------------------------------------------------------------------
+    //  HOW FAILURE ROTATION WORKS
+    // --------------------------------------------------------------------------------------
+    //
+    //   1) Increment currentPriorityIndex with wrap-around.
+    //      Example list: [Primary, Backup1, Backup2, Backup3]
+    //
+    //   2) nextIP = mqttPriorityList[currentPriorityIndex]
+    //
+    //   3) Determine module type:
+    //        • SmartModules (REL, SEN, STC, etc.)   → SIMPLE FAILOVER
+    //        • SmartBox units (SBN, SBC, SBP)       → SMART FAILOVER
+    //
+    // --------------------------------------------------------------------------------------
+    //  NORMAL SMARTMODULE FAILOVER (Non-SmartBox)
+    // --------------------------------------------------------------------------------------
+    //
+    //   For normal modules:
+    //       pendingBrokerIP = nextIP
+    //       commitPendingBroker()
+    //       return
+    //
+    //   No ACK required, no UART messaging.
+    //   Very fast and completely self-contained.
+    //
+    // --------------------------------------------------------------------------------------
+    //  SMARTBOX-AWARE FAILOVER
+    // --------------------------------------------------------------------------------------
+    //
+    //   SmartBox modules are *cluster participants*:
+    //
+    //   Two scenarios:
+    //
+    //   A) nextIP == our own IP
+    //      → We are next in the failover hierarchy.
+    //      → Notify Pi: "Become Primary"
+    //      → Wait for ACK (up to 10s)
+    //      → After ACK, apply broker and continue
+    //
+    //   B) nextIP != ownIP
+    //      → Another SmartBox is next in priority.
+    //      → Notify Pi: "Switch Node-RED MQTT broker to nextIP"
+    //      → Wait for ACK
+    //      → After ACK, apply broker and continue
+    //
+    // --------------------------------------------------------------------------------------
+    //  FAILOVER SAFETY DESIGN
+    // --------------------------------------------------------------------------------------
+    //
+    //   • failoverInProgress freezes ONLY the MQTT reconnection logic.
+    //     WiFi backoff continues normally.
+    //     LED system continues normally.
+    //
+    //   • Only one failover attempt runs at a time.
+    //   • ACK ensures the cluster stays synchronized.
+    //   • No blind reconnects.
+    //
+    // --------------------------------------------------------------------------------------
+    //  SUMMARY
+    // --------------------------------------------------------------------------------------
+    //
+    //   - SmartModules rotate brokers immediately.
+    //   - SmartBox units coordinate with the Pi for consistent cluster switching.
+    //   - failoverInProgress ensures no reconnection fight occurs during failover.
+    //   - Once complete, MQTT reconnects using the new broker automatically.
+    //
+    // ======================================================================================
+
+    void handleMQTTFailover()
+    {
+        logMessage(LOG_WARN, "🚨 MQTT FAILOVER triggered.");
+
+        // Freeze ONLY MQTT reconnect logic — NOT LED, NOT WiFi
+        failoverInProgress = true;
+
+        // ---------------------------------------------------------
+        // Get own IP
+        // ---------------------------------------------------------
+        String ownIP = WiFi.localIP().toString();
+
+        // ---------------------------------------------------------
+        // Determine next broker IP
+        // ---------------------------------------------------------
+        if (mqttPriorityCount == 0)
+        {
+            logMessage(LOG_ERROR, "❌ No MQTT priority list configured.");
+            failoverInProgress = false;
+            return;
+        }
+
+        // Move index → next item (wrap-around)
+        currentPriorityIndex++;
+        if (currentPriorityIndex >= mqttPriorityCount)
+            currentPriorityIndex = 0;
+
+        String nextIP = mqttPriorityList[currentPriorityIndex];
+        uint16_t nextPort = mqtt_port;
+
+        logMessage(LOG_INFO,
+                   "🔄 Next priority broker → " + nextIP + ":" + String(nextPort));
+
+        // ---------------------------------------------------------
+        // Determine if this is a SmartBox module
+        // ---------------------------------------------------------
+        String sn = String(serialNumber);
+        sn.toUpperCase();
+
+        bool isSmartBox =
+            sn.startsWith("SBN") ||
+            sn.startsWith("SBC") ||
+            sn.startsWith("SBP");
+
+        // ---------------------------------------------------------
+        // CASE 1 — Non-SmartBox modules
+        // ---------------------------------------------------------
+        if (!isSmartBox)
+        {
+            logMessage(LOG_INFO, "📦 Normal SmartModule failover.");
+
+            pendingBrokerIP = nextIP;
+            pendingBrokerPort = nextPort;
+
+            commitPendingBroker();
+
+            failoverInProgress = false;
+            return;
+        }
+
+        // ---------------------------------------------------------
+        // CASE 2 — SmartBox-aware failover
+        // ---------------------------------------------------------
+        logMessage(LOG_INFO, "🧠 SmartBox-aware failover logic engaged.");
+
+        mqttFailoverAckReceived = false;
+
+        // =========================================================
+        // A. Next broker IP == our own IP → we must become primary
+        // =========================================================
+        if (nextIP == ownIP)
+        {
+            logMessage(LOG_WARN,
+                       "🏆 This SmartBox is next in line → requesting PRIMARY ROLE");
+
+            SmartBox_notifyBecomePrimary(); // UART → Pi
+
+            pendingBrokerIP = ownIP;
+            pendingBrokerPort = nextPort;
+
+            // Wait for ACK (max 10 sec)
+            uint32_t start = millis();
+            while (!mqttFailoverAckReceived && millis() - start < 10000)
+                vTaskDelay(pdMS_TO_TICKS(50));
+
+            if (!mqttFailoverAckReceived)
+            {
+                logMessage(LOG_ERROR,
+                           "❌ No ACK from Pi (becomePrimary). Failover incomplete.");
+            }
+            else
+            {
+                logMessage(LOG_INFO,
+                           "✅ ACK from Pi. SmartBox promoted to PRIMARY.");
+                commitPendingBroker();
+            }
+
+            failoverInProgress = false;
+            return;
+        }
+
+        // =========================================================
+        // B. Next broker IP is another SmartBox → request switch
+        // =========================================================
+        logMessage(LOG_INFO,
+                   "➡️ Requesting Pi to switch NodeRED MQTT → " + nextIP);
+
+        SmartBox_notifySetBroker(nextIP); // UART → Pi
+
+        pendingBrokerIP = nextIP;
+        pendingBrokerPort = nextPort;
+
+        // Wait for ACK (max 10 sec)
+        uint32_t start = millis();
+        while (!mqttFailoverAckReceived && millis() - start < 10000)
+            vTaskDelay(pdMS_TO_TICKS(50));
+
+        if (!mqttFailoverAckReceived)
+        {
+            logMessage(LOG_ERROR,
+                       "❌ No ACK from Pi (setBroker). Failover incomplete.");
+        }
+        else
+        {
+            logMessage(LOG_INFO,
+                       "✅ ACK from Pi. Switching MQTT → " + pendingBrokerIP);
+            commitPendingBroker();
+        }
+
+        failoverInProgress = false;
+    }
+
+    // ======================================================================================
+    //  COMMIT NEW MQTT BROKER (Used by failover + provisioning updates)
+    // ======================================================================================
+    //
+    //  PURPOSE:
+    //      Apply the new broker IP + port selected by the failover engine, and
+    //      clear the pending values.
+    //
+    //  WHEN THIS IS CALLED:
+    //      • After SmartModule failover (immediate).
+    //      • After SmartBox cluster failover (only after ACK from Pi).
+    //      • After SmartApp provisioning (manual reassignment).
+    //
+    //  WHAT IT DOES:
+    //
+    //      currentBrokerIP   = pendingBrokerIP
+    //      currentBrokerPort = pendingBrokerPort
+    //
+    //      Log the new broker.
+    //      Clear pending fields.
+    //
+    //  IMPORTANT NOTES:
+    //
+    //   • This function *does NOT* connect to MQTT.
+    //       The wifiMqttCheckTask() will automatically attempt a reconnect on the next cycle.
+    //
+    //   • This function does NOT persist the priority index.
+    //       That is done only when connection SUCCESSFULLY happens:
+    //             → inside onMqttConnect()
+    //
+    //   • pendingBrokerIP allows safe staging:
+    //       We never modify the active broker until the Pi confirms the failover.
+    //
+    //   • commitPendingBroker() always makes the new broker active instantly.
+    //       It is intentionally simple and deterministic.
+    //
+    // ======================================================================================
+
+    void commitPendingBroker()
+    {
+        if (pendingBrokerIP.length() == 0)
+            return;
+
+        currentBrokerIP = pendingBrokerIP;
+        currentBrokerPort = pendingBrokerPort;
+
+        logMessage(LOG_INFO,
+                   "📡 Committed new MQTT broker → " +
+                       currentBrokerIP + ":" + String(currentBrokerPort));
+
+        pendingBrokerIP = "";
+        pendingBrokerPort = 0;
+    }
+
+    void onMqttConnect(bool sessionPresent)
+    {
         Serial.println("Connected to MQTT broker.");
         mqttIsConnected = true;
-    
+
         // Subscribe to module-specific topic: serialNumber/#
         String serialTopic = String(serialNumber) + "/#";
         mqttClient->subscribe(serialTopic.c_str(), 1);
@@ -129,120 +401,168 @@ namespace SmartCore_MQTT {
         // Subscribe to global update topic
         mqttClient->subscribe("update/#", 1);
         Serial.println("✅ Subscribed to update/#");
-    
+
         // Publish initial presence messages
         mqttClient->publish((String(mqttPrefix) + "/connected").c_str(), 1, true, "connected");
         requestSmartBoatTime();
-        
+
         logMessage(LOG_INFO, "🔍 firstWifiCOnnect: " + String(firstWiFiConnect ? "true" : "false"));
-        if (firstWiFiConnect) {
+        if (firstWiFiConnect)
+        {
             logMessage(LOG_INFO, "🚀 firstWiFiConnect is TRUE — preparing to publish newModule message...");
-        
+
             logMessage(LOG_INFO, "🔍 serialNumberAssigned: " + String(serialNumberAssigned ? "true" : "false"));
             logMessage(LOG_INFO, "🔍 serialNumber: " + String(serialNumber));
             logMessage(LOG_INFO, "🔍 mqttPrefix: " + String(mqttPrefix));
-        
+
             char topic[50];
             snprintf(topic, sizeof(topic), (String(mqttPrefix) + "/newModule").c_str());
             logMessage(LOG_INFO, String("🧭 Publishing to topic: ") + topic);
-        
+
             DynamicJsonDocument doc(256);
             doc["mac"] = WiFi.macAddress();
             doc["ip"] = WiFi.localIP().toString();
-        
-            if (serialNumberAssigned) {
+
+            if (serialNumberAssigned)
+            {
                 doc["serialNumber"] = serialNumber;
-            } else {
+            }
+            else
+            {
                 doc["serialNumber"] = "unassigned";
             }
-        
+
             String payload;
             serializeJson(doc, payload);
             logMessage(LOG_INFO, "📦 Payload to publish: " + payload);
-        
-            if (mqttClient->connected()) {
+
+            if (mqttClient->connected())
+            {
                 mqttClient->publish(topic, 1, true, payload.c_str());
                 logMessage(LOG_INFO, "✅ MQTT publish call made.");
-            } else {
+            }
+            else
+            {
                 logMessage(LOG_WARN, "❌ MQTT client not connected — skipping publish.");
             }
-        
+
             firstWiFiConnect = false;
             SmartCore_EEPROM::writeFirstWiFiConnectFlag(false);
             logMessage(LOG_INFO, "📝 firstWiFiConnect flag set to false and saved.");
-        } else {
+        }
+        else
+        {
             logMessage(LOG_INFO, "⏭️ Skipping newModule publish — firstWiFiConnect is false.");
         }
-        
+
         // 🌡️ Start metrics task
-        if (!metricsTaskHandle) {
+        if (!metricsTaskHandle)
+        {
             xTaskCreate(metricsTask, "metricsTask", 4096, nullptr, 1, &metricsTaskHandle);
         }
 
-        //start time get task
-        if (!timeSyncTaskHandle) {
+        // start time get task
+        if (!timeSyncTaskHandle)
+        {
             xTaskCreatePinnedToCore(timeSyncTask, "timeSyncTask", 4096, nullptr, 1, &timeSyncTaskHandle, 0);
             Serial.println("🕓 Time sync task started");
         }
-    }
 
-    void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-    String topicStr = String(topic);
+        // -------------------------------------------------------------
+        // Persist current priority index AFTER SUCCESSFUL MQTT CONNECT
+        // -------------------------------------------------------------
+        if (SmartCore_MQTT::failoverInProgress)
+        {
+            // Check correctness: ensure we're really connected to a priority IP
+            String connectedIP = SmartCore_MQTT::currentBrokerIP;
+            uint16_t connectedPort = SmartCore_MQTT::currentBrokerPort;
 
-    // Choose buffer based on topic for safety (or use a single buffer if only one at a time)
-    String* buffer = nullptr;
-    String expectedConfigTopic  = String(serialNumber) + "/config";
-    String expectedErrorsTopic  = String(serialNumber) + "/errors";
-    String expectedModuleTopic  = String(serialNumber) + "/module";
-    String expectedResetTopic   = String(serialNumber) + "/reset";
-    String expectedUpgradeTopic = String(serialNumber) + "/upgrade";
-    String expectedUpdateTopic  = String(serialNumber) + "/update";
+            bool match = false;
+            if (SmartCore_MQTT::currentPriorityIndex < mqttPriorityCount)
+            {
+                String expectedIP = mqttPriorityList[SmartCore_MQTT::currentPriorityIndex];
+                match = (connectedIP == expectedIP);
+            }
 
-    if      (topicStr == expectedConfigTopic)   buffer = &mqttConfigMessageBuffer;
-    else if (topicStr == expectedErrorsTopic)   buffer = &mqttErrorsMessageBuffer;
-    else if (topicStr == expectedModuleTopic)   buffer = &mqttModuleMessageBuffer;
-    else if (topicStr == expectedResetTopic)    buffer = &mqttResetMessageBuffer;
-    else if (topicStr == expectedUpgradeTopic)  buffer = &mqttUpgradeMessageBuffer;
-    else if (topicStr == expectedUpdateTopic)   buffer = &mqttUpdateMessageBuffer;
+            if (match)
+            {
+                logMessage(LOG_INFO,
+                           "💾 Persisting MQTT priority index → " +
+                               String(SmartCore_MQTT::currentPriorityIndex));
 
-    if (buffer) {
-        // New message? Clear the buffer
-        if (index == 0) buffer->clear();
+                SmartCore_EEPROM::writeByteToEEPROM(
+                    MQTT_LAST_PRIORITY_ADDR,
+                    SmartCore_MQTT::currentPriorityIndex);
+                EEPROM.commit();
+            }
+            else
+            {
+                logMessage(LOG_WARN,
+                           "⚠️ Priority mismatch — NOT saving priority index.");
+            }
 
-        // Append this chunk (handle null terminator yourself)
-        buffer->concat(String(payload).substring(0, len));
-
-        // If we have the whole message
-        if ((index + len) == total) {
-            Serial.printf("📨 MQTT Message on [%s] (assembled %d bytes): %s\n", topic, buffer->length(), buffer->c_str());
-
-            // Now call the right handler
-            if      (buffer == &mqttConfigMessageBuffer)   handleConfigMessage(*buffer);
-            else if (buffer == &mqttErrorsMessageBuffer)   handleErrorMessage(*buffer);
-            else if (buffer == &mqttModuleMessageBuffer)   handleModuleMessage(*buffer);
-            else if (buffer == &mqttResetMessageBuffer)    handleResetMessage(*buffer);
-            else if (buffer == &mqttUpgradeMessageBuffer)  handleUpgradeMessage(*buffer);
-            else if (buffer == &mqttUpdateMessageBuffer)   handleUpdateMessage(*buffer);
-
-            buffer->clear(); // ready for next message
+            SmartCore_MQTT::failoverInProgress = false;
         }
-    } else {
-        Serial.printf("❓ Unknown subtopic on [%s]\n", topicStr.c_str());
     }
-}
 
-    void handleConfigMessage(const String& message) {
-        DynamicJsonDocument doc(4096);  // Heap allocation, much safer!
+    void onMqttMessage(char *topic, char *payload, AsyncMqttClientMessageProperties properties,
+                       size_t len, size_t index, size_t total)
+    {
+        // ✅ Safely copy payload into null-terminated buffer
+        char safePayload[len + 1];
+        memcpy(safePayload, payload, len);
+        safePayload[len] = '\0';
+
+        String message = String(safePayload);
+        Serial.printf("📨 MQTT Message on [%s]: %s\n", topic, message.c_str());
+
+        String topicStr = String(topic);
+
+        // 🔍 Define all expected topics
+        String expectedConfigTopic = String(serialNumber) + "/config";
+        String expectedErrorsTopic = String(serialNumber) + "/errors";
+        String expectedModuleTopic = String(serialNumber) + "/module";
+        String expectedResetTopic = String(serialNumber) + "/reset";
+        String expectedUpgradeTopic = String(serialNumber) + "/upgrade";
+        String expectedUpdateTopic = String(serialNumber) + "/update";
+
+        // 🧭 Route to appropriate handlers
+        if (topicStr == expectedConfigTopic)
+            handleConfigMessage(message);
+        else if (topicStr == expectedErrorsTopic)
+            handleErrorMessage(message);
+        else if (topicStr == expectedModuleTopic)
+            handleModuleMessage(message);
+        else if (topicStr == expectedResetTopic)
+            handleResetMessage(message);
+        else if (topicStr == expectedUpgradeTopic)
+            handleUpgradeMessage(message);
+        else if (topicStr == expectedUpdateTopic)
+            handleUpdateMessage(message);
+        else
+            Serial.printf("❓ Unknown subtopic on [%s]\n", topicStr.c_str());
+    }
+
+    void handleConfigMessage(const String &message)
+    {
+        StaticJsonDocument<1024> doc;
         DeserializationError error = deserializeJson(doc, message);
-    
-        if (error) {
-            Serial.println("❌ Failed to parse config JSON");
+
+        if (error)
+        {
+            Serial.printf("❌ Failed to parse config JSON: %s\n", error.c_str());
             return;
         }
-    
+
         String type = doc["type"] | "";
-    
-        if (type == "getConfig") {
+        if (type.isEmpty())
+        {
+            Serial.println("⚠️ Config message missing 'type' field.");
+            return;
+        }
+
+        if (type == "getConfig")
+        {
             StaticJsonDocument<1024> response;
             response["serialNumber"] = serialNumber;
             response["moduleName"] = moduleName;
@@ -251,73 +571,77 @@ namespace SmartCore_MQTT {
             response["ip"] = WiFi.localIP().toString();
             response["firmwareVersion"] = FW_VER;
             response["updateAvailable"] = SmartCore_EEPROM::loadUpgradeFlag();
-    
+
             String payload;
             serializeJson(response, payload);
             mqttClient->publish("module/config/update", 1, true, payload.c_str());
-    
             Serial.println("✅ Published generic module config");
 
+            // ✅ Forward object to module-specific handler too
             handleModuleSpecificConfig(doc.as<JsonObject>());
         }
-    
-        else if (type == "setConfig") {
+        else if (type == "setConfig")
+        {
             bool settingsChanged = false;
-    
-            if (doc.containsKey("moduleName")) {
+
+            if (doc.containsKey("moduleName"))
+            {
                 String name = doc["moduleName"].as<String>();
-                if (name.length() <= EEPROM_STR_LEN) {
+                if (name.length() <= EEPROM_STR_LEN)
+                {
                     moduleName = name;
                     SmartCore_EEPROM::writeModuleNameToEEPROM(moduleName);
                     settingsChanged = true;
                 }
             }
-    
-            
-            if (doc.containsKey("location")) {
+
+            if (doc.containsKey("location"))
+            {
                 String loc = doc["location"].as<String>();
-                if (loc.length() <= EEPROM_STR_LEN) {
+                if (loc.length() <= EEPROM_STR_LEN)
+                {
                     location = loc;
                     SmartCore_EEPROM::writeLocationToEEPROM(location);
                     settingsChanged = true;
                 }
             }
-    
-            if (settingsChanged) {
+
+            if (settingsChanged)
                 Serial.println("💾 Generic config updated and saved.");
-            }
-            // Send back updated config
+
+            // ✅ Re-publish the updated config
             handleConfigMessage("{\"type\":\"getConfig\"}");
         }
-
-        // ✅ Route all types (including setModuleConfig) to module-specific handler
-        //if (type == "getConfig" || type == "setConfig" || type == "setModuleConfig") {
-        else if (type == "setModuleConfig") {
+        else if (type == "setModuleConfig")
+        {
             handleModuleSpecificConfig(doc.as<JsonObject>());
         }
-    
-        else {
+        else
+        {
             Serial.printf("⚠️ Unknown config message type: '%s'\n", type.c_str());
         }
     }
-    
 
-    void handleModuleMessage(const String& message){
+    void handleModuleMessage(const String &message)
+    {
         Serial.println("message arrived for module");
         handleModuleSpecificModule(message);
     }
 
-    void handleErrorMessage(const String& message){
+    void handleErrorMessage(const String &message)
+    {
         Serial.println("message arrived for errors");
         handleModuleSpecificErrors(message);
     }
 
-    void handleResetMessage(const String& message) {
+    void handleResetMessage(const String &message)
+    {
         Serial.println("🔄 Reset message received");
         StaticJsonDocument<256> doc;
         DeserializationError error = deserializeJson(doc, message);
 
-        if (error) {
+        if (error)
+        {
             Serial.print("❌ Failed to parse reset JSON: ");
             Serial.println(error.c_str());
             return;
@@ -325,26 +649,33 @@ namespace SmartCore_MQTT {
 
         String action = doc["action"] | "";
 
-        if (action == "reset") {
+        if (action == "reset")
+        {
             bool confirm = doc["confirm"] | false;
-            if (confirm) {
+            if (confirm)
+            {
                 xTaskCreatePinnedToCore(SmartCore_System::resetWorkerTask, "ResetWorker", 4096, NULL, 1, NULL, 0);
-            } else {
+            }
+            else
+            {
                 Serial.println("⚠️ Reset requested but not confirmed. Ignoring.");
             }
-        } else {
+        }
+        else
+        {
             Serial.println("⚠️ Unsupported action in reset message.");
         }
-       
     }
-    
-    void handleUpgradeMessage(const String& message) {
+
+    void handleUpgradeMessage(const String &message)
+    {
         Serial.println("⬆️ OTA upgrade message received");
 
         StaticJsonDocument<256> doc;
         DeserializationError error = deserializeJson(doc, message);
 
-        if (error) {
+        if (error)
+        {
             Serial.print("❌ Failed to parse upgrade JSON: ");
             Serial.println(error.c_str());
             return;
@@ -353,17 +684,24 @@ namespace SmartCore_MQTT {
         String action = doc["action"] | "";
         bool confirm = doc["confirm"] | false;
 
-        if (action == "upgrade") {
-            if (confirm) {
+        if (action == "upgrade")
+        {
+            if (confirm)
+            {
                 Serial.println("✅ OTA confirmed. Spawning OTA task...");
                 SmartCore_OTA::shouldUpdateFirmware = true;
-                if (SmartCore_OTA::otaTaskHandle == nullptr) {
+                if (SmartCore_OTA::otaTaskHandle == nullptr)
+                {
                     xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTATask", 8192, NULL, 1, &SmartCore_OTA::otaTaskHandle, 1);
                 }
-            } else {
+            }
+            else
+            {
                 Serial.println("⚠️ Upgrade requested but not confirmed. Ignoring.");
             }
-        } else if (action == "checkUpdateAvailable") {
+        }
+        else if (action == "checkUpdateAvailable")
+        {
             Serial.println("🔍 Checking for OTA update availability...");
             updateInfo inf = OTADRIVE.updateFirmwareInfo();
 
@@ -380,84 +718,100 @@ namespace SmartCore_MQTT {
             String responseJson;
             serializeJson(response, responseJson);
 
-            if (mqttIsConnected && mqttClient) {
+            if (mqttIsConnected && mqttClient)
+            {
                 mqttClient->publish("module/upgrade", 0, false, responseJson.c_str());
             }
             Serial.println("✅ OTA check response published.");
-        } else {
+        }
+        else
+        {
             Serial.println("⚠️ Unsupported action in upgrade message.");
         }
     }
 
-    void handleUpdateMessage(const String& message) {
+    void handleUpdateMessage(const String &message)
+    {
         Serial.println("🛠️ Update message received");
-    
+
         StaticJsonDocument<256> doc;
         DeserializationError error = deserializeJson(doc, message);
-    
-        if (error) {
+
+        if (error)
+        {
             Serial.print("❌ Failed to parse update JSON: ");
             Serial.println(error.c_str());
             return;
         }
-    
+
         // ✅ Check for SmartBoat time sync
         if (doc.containsKey("update") &&
             doc["update"] == "time" &&
             doc.containsKey("epoch") &&
-            awaitingSmartboatTimeSync) {
-    
-            smartBoatEpoch = doc["epoch"];  // assumed to be unsigned long / uint32_t
+            awaitingSmartboatTimeSync)
+        {
+
+            smartBoatEpoch = doc["epoch"]; // assumed to be unsigned long / uint32_t
             smartBoatEpochSyncMillis = millis();
             awaitingSmartboatTimeSync = false;
-    
+
             Serial.printf("🕒 Received SmartBoat time: %lu (syncMillis: %lu)\n",
                           smartBoatEpoch, smartBoatEpochSyncMillis);
         }
-        else {
+        else
+        {
             Serial.println("⚠️ Unrecognized update message or already synced.");
         }
     }
-    
-      
 
-    void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-        mqttIsConnected = false;  // Update connection state
+    void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
+    {
+        mqttIsConnected = false; // Update connection state
         logMessage(LOG_WARN, "❌ Disconnected from MQTT (" + String((int)reason) + ", " + mqttDisconnectReasonToStr(reason) + ")");
-        currentLEDMode = LEDMODE_STATUS;
+        SmartCore_LED::currentLEDMode = LEDMODE_STATUS;
 
-        if (metricsTaskHandle) {
+        if (metricsTaskHandle)
+        {
             vTaskDelete(metricsTaskHandle);
             metricsTaskHandle = nullptr;
             Serial.println("🛑 Metrics task stopped");
         }
 
-        if (timeSyncTaskHandle) {
+        if (timeSyncTaskHandle)
+        {
             vTaskDelete(timeSyncTaskHandle);
             timeSyncTaskHandle = nullptr;
             Serial.println("🛑 Time sync task stopped");
         }
-     
     }
 
-    const char* mqttDisconnectReasonToStr(AsyncMqttClientDisconnectReason reason) {
-    switch (reason) {
-        case AsyncMqttClientDisconnectReason::TCP_DISCONNECTED: return "TCP_DISCONNECTED";
-        case AsyncMqttClientDisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION: return "UNACCEPTABLE_PROTOCOL_VERSION";
-        case AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED: return "IDENTIFIER_REJECTED";
-        case AsyncMqttClientDisconnectReason::MQTT_SERVER_UNAVAILABLE: return "SERVER_UNAVAILABLE";
-        case AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS: return "MALFORMED_CREDENTIALS";
-        case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED: return "NOT_AUTHORIZED";
-        default: return "UNKNOWN";
-    }
+    const char *mqttDisconnectReasonToStr(AsyncMqttClientDisconnectReason reason)
+    {
+        switch (reason)
+        {
+        case AsyncMqttClientDisconnectReason::TCP_DISCONNECTED:
+            return "TCP_DISCONNECTED";
+        case AsyncMqttClientDisconnectReason::MQTT_UNACCEPTABLE_PROTOCOL_VERSION:
+            return "UNACCEPTABLE_PROTOCOL_VERSION";
+        case AsyncMqttClientDisconnectReason::MQTT_IDENTIFIER_REJECTED:
+            return "IDENTIFIER_REJECTED";
+        case AsyncMqttClientDisconnectReason::MQTT_SERVER_UNAVAILABLE:
+            return "SERVER_UNAVAILABLE";
+        case AsyncMqttClientDisconnectReason::MQTT_MALFORMED_CREDENTIALS:
+            return "MALFORMED_CREDENTIALS";
+        case AsyncMqttClientDisconnectReason::MQTT_NOT_AUTHORIZED:
+            return "NOT_AUTHORIZED";
+        default:
+            return "UNKNOWN";
+        }
     }
 
-    void metricsTask(void *parameter) {
-        // esp_task_wdt_add(NULL); 
+    void metricsTask(void *parameter)
+    {
         logMessage(LOG_INFO, "📊 Metrics task started.");
 
         // Simulate a crash during startup
-        //int* ptr = nullptr;
+        // int* ptr = nullptr;
         //*ptr = 42;  // 💥 Boom
 
         // Temperature sensor config
@@ -472,12 +826,13 @@ namespace SmartCore_MQTT {
         uint8_t mac[6];
         esp_read_mac(mac, ESP_MAC_WIFI_STA);
         snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-        for (;;) {
-            if (!mqttIsConnected) {
+        for (;;)
+        {
+            if (!mqttIsConnected)
+            {
                 logMessage(LOG_INFO, "🛑 Metrics task exiting — MQTT disconnected.");
-                //esp_task_wdt_delete(NULL);
                 vTaskDelete(nullptr);
             }
 
@@ -491,9 +846,12 @@ namespace SmartCore_MQTT {
             metrics["uptime"] = millis() / 1000;
 
             float tempC;
-            if (temp_sensor_read_celsius(&tempC) == ESP_OK) {
+            if (temp_sensor_read_celsius(&tempC) == ESP_OK)
+            {
                 metrics["tempC"] = tempC;
-            } else {
+            }
+            else
+            {
                 metrics["tempC"] = nullptr;
             }
 
@@ -506,15 +864,18 @@ namespace SmartCore_MQTT {
             mqttClient->publish("module/metrics", 0, false, buffer, len);
             logMessage(LOG_INFO, "📤 Metrics sent → " + String(buffer));
 
-            vTaskDelay(10000 / portTICK_PERIOD_MS);  // 10s loop
+            vTaskDelay(10000 / portTICK_PERIOD_MS); // 10s loop
         }
     }
 
-    void timeSyncTask(void* parameter) {
-        const TickType_t delay = pdMS_TO_TICKS(3600000);  // 1 hour = 3600000 ms
-    
-        for (;;) {
-            if (mqttIsConnected) {
+    void timeSyncTask(void *parameter)
+    {
+        const TickType_t delay = pdMS_TO_TICKS(3600000); // 1 hour = 3600000 ms
+
+        for (;;)
+        {
+            if (mqttIsConnected)
+            {
                 Serial.println("🕓 Hourly SmartBoat time sync...");
                 requestSmartBoatTime();
             }
@@ -522,22 +883,25 @@ namespace SmartCore_MQTT {
         }
     }
 
-    void requestSmartBoatTime() {
+    void requestSmartBoatTime()
+    {
         StaticJsonDocument<128> doc;
         doc["serialNumber"] = serialNumber;
         doc["action"] = "gettime";
-    
+
         char payload[128];
         serializeJson(doc, payload, sizeof(payload));
-    
+
         mqttClient->publish("module/update", 1, false, payload);
         awaitingSmartboatTimeSync = true;
-    
+
         Serial.println("📡 Time sync requested via module/update");
     }
 
-    void hardResetClient() {
-        if (mqttClient) {
+    void hardResetClient()
+    {
+        if (mqttClient)
+        {
             mqttClient->onConnect(nullptr);
             mqttClient->onDisconnect(nullptr);
             mqttClient->onMessage(nullptr);
@@ -550,6 +914,4 @@ namespace SmartCore_MQTT {
             logMessage(LOG_INFO, "🗑️ MQTT client deleted.");
         }
     }
-
-    
 }

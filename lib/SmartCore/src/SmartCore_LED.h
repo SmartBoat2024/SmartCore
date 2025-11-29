@@ -37,43 +37,55 @@ extern TaskHandle_t wifiMqttCheckTaskHandle;
 extern TaskHandle_t recoveryTaskHandle;
 
 // LED control mode enum
-enum LEDMode {
+enum LEDMode
+{
     LEDMODE_STATUS,
     LEDMODE_WAITING,
     LEDMODE_DEBUG_PATTERN,
     LEDMODE_OFF
 };
 
-enum DebugColor {
+enum DebugColor
+{
     DEBUG_COLOR_YELLOW,  // MQTT
     DEBUG_COLOR_RED,     // WiFi
-    DEBUG_COLOR_CYAN,    // Reserved or future use
+    DEBUG_COLOR_CYAN,    // Provisioning
     DEBUG_COLOR_MAGENTA, // Optional future use
 };
 
-enum ProvisioningState {
+enum ProvisioningState
+{
     PROVISIONING_NONE,
     PROVISIONING_PORTAL,
     PROVISIONING_SMARTCONNECT
 };
 
-enum RecoveryType { WIFI_RECOVERY, MQTT_RECOVERY };
+enum RecoveryType
+{
+    WIFI_RECOVERY,
+    MQTT_RECOVERY
+};
 
-extern volatile LEDMode currentLEDMode;
-extern DebugColor currentDebugColor;
-extern ProvisioningState currentProvisioningState;
-extern String flashPattern;
+namespace SmartCore_LED
+{
 
-// Function declarations
-void initSmartCoreLED();
-void setRGBColor(uint8_t r, uint8_t g, uint8_t b);
-void triggerFlashPattern(const String& pattern, DebugColor color);
-void flashLEDTask(void* parameter);
-void provisioningBlinkTask(void* parameter);
-void turnOffRGBLEDs();
-void setLEDMode(LEDMode mode);
-void wifiMqttCheckTask(void *parameter);
-void setFailedWiFiCredsTask(void *parameter);
+    extern volatile LEDMode currentLEDMode;
+    extern DebugColor currentDebugColor;
+    extern ProvisioningState currentProvisioningState;
+    extern String flashPattern;
 
-extern volatile bool inRecoveryMode;
+    // Function declarations
+    void initSmartCoreLED();
+    void setRGBColor(uint8_t r, uint8_t g, uint8_t b);
+    void triggerFlashPattern(const String &pattern, DebugColor color);
+    void flashLEDTask(void *parameter);
+    void provisioningBlinkTask(void *parameter);
+    void turnOffRGBLEDs();
+    void setLEDMode(LEDMode mode);
+    void wifiMqttCheckTask(void *parameter);
+    void setFailedWiFiCredsTask(void *parameter);
+    void statusLEDTask(void *parameter);
 
+    extern volatile bool inRecoveryMode;
+
+}

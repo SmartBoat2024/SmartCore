@@ -6,16 +6,18 @@
 #include "SmartCoreVersion.h"
 #include "SmartCore_config.h"
 
-#define CRASH_LIMIT_RESET  3
-#define CRASH_LIMIT_SAFE   6
+#define CRASH_LIMIT_RESET 3
+#define CRASH_LIMIT_SAFE 6
 
-enum CrashCounterType {
+enum CrashCounterType
+{
     CRASH_COUNTER_BOOT,
     CRASH_COUNTER_RUNTIME,
-    CRASH_COUNTER_ALL  // for full wipes if ever needed
+    CRASH_COUNTER_ALL // for full wipes if ever needed
 };
 
-namespace SmartCore_System {
+namespace SmartCore_System
+{
 
     extern const unsigned long holdTime;
     extern unsigned long buttonPressStart;
@@ -26,20 +28,34 @@ namespace SmartCore_System {
 
     void preinit();
     void init();
-    void setModuleSettings(const SmartCoreSettings& settings);
-    const SmartCoreSettings& getModuleSettings();
+    void setModuleSettings(const SmartCoreSettings &settings);
+    const SmartCoreSettings &getModuleSettings();
     void getModuleConfig();
     void createAppTasks();
     void checkresetButtonTask(void *parameter);
     void resetWorkerTask(void *param);
     void clearCrashCounter(CrashCounterType type);
     void enterSafeMode();
+    void loadMqttPriorityList();
 
 }
+
+extern "C" void SmartBox_notifyBecomePrimary();
+extern "C" void SmartBox_notifySetBroker(const String &newIp);
+extern "C" void SmartBox_notifyProvisionReceived(
+    const String &ssid,
+    const String &password,
+    const String &serial,
+    bool mqttStatic,
+    const String &staticIp,
+    const String &subnetMask,
+    const String ipList[], // ordered SmartBox list
+    int ipCount,           // number of SmartBoxes
+    int priority,          // my priority (1 = primary)
+    int mqttPort);
 
 // LED pin and button constants (override externally if needed)
 
 #ifndef buttonPin
 #define buttonPin 0
 #endif
-

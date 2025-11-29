@@ -22,8 +22,8 @@
 #include "config.h"
 #include "module_reset.h"
 
-
-namespace SmartCore_System {
+namespace SmartCore_System
+{
 
     TaskHandle_t resetButtonTaskHandle = NULL;
 
@@ -39,39 +39,54 @@ namespace SmartCore_System {
     static SmartCoreSettings _settings = {
         .serialNumber = "UNKNOWN",
         .moduleName = "Generic SmartCore",
-        .apSSID = "SmartModule"
-    };
+        .apSSID = "SmartModule"};
 
-    void setModuleSettings(const SmartCoreSettings& settings) {
+    void setModuleSettings(const SmartCoreSettings &settings)
+    {
         _settings = settings;
-    
-        logMessage(LOG_INFO, String("📦 Module settings updated → serial: ") + 
-                   (settings.serialNumber ? settings.serialNumber : "nullptr") + 
-                   ", name: " + 
-                   (settings.moduleName ? settings.moduleName : "nullptr"));
-    
+
+        logMessage(LOG_INFO, String("📦 Module settings updated → serial: ") +
+                                 (settings.serialNumber ? settings.serialNumber : "nullptr") +
+                                 ", name: " +
+                                 (settings.moduleName ? settings.moduleName : "nullptr"));
+
         // 🧠 SYNC TO GLOBAL BUFFERS
         strncpy(serialNumber, settings.serialNumber, sizeof(serialNumber) - 1);
         serialNumber[sizeof(serialNumber) - 1] = '\0';
-    
+
         // 💾 WRITE TO EEPROM
         SmartCore_EEPROM::writeStringToEEPROM(SN_ADDR, String(settings.serialNumber), 41);
         SmartCore_EEPROM::writeModuleNameToEEPROM(settings.moduleName);
     }
 
-    const SmartCoreSettings& getModuleSettings() {
+    const SmartCoreSettings &getModuleSettings()
+    {
         return _settings;
     }
 
-    void preinit(){
+    void preinit()
+    {
         Serial.begin(115200);
         delay(4000);
 
-        if (!EEPROM.begin(1024)) {
+        if (!EEPROM.begin(1024))
+        {
             logMessage(LOG_ERROR, "❌ EEPROM.begin failed!");
-            while (true) yield();
+            while (true)
+                yield();
         }
-        
+
+        //////// FOR TESTING  ////////
+        Serial.println("🐞 POST-BOOT: MQTT PRIORITY CHECK");
+        int bootCount = SmartCore_EEPROM::readIntFromEEPROM(MQTT_PRIORITY_COUNT_ADDR);
+        Serial.printf("Count from EEPROM: %d\n", bootCount);
+        for (int i = 0; i < bootCount; i++)
+        {
+            String slot = SmartCore_EEPROM::readStringFromEEPROM(MQTT_PRIORITY_LIST_ADDR + (i * 17), 17);
+            Serial.printf("   [%d] = '%s'\n", i, slot.c_str());
+        }
+        //////////////////////////
+
         // 🔍 Read and increment crash counter
         uint8_t crashCounter = EEPROM.read(CRASH_COUNTER_ADDR);
         crashCounter++;
@@ -92,50 +107,59 @@ namespace SmartCore_System {
         logMessage(LOG_WARN, String("🧠 Boot Runtime crash counter: ") + runtimeCrashCounter);
 
         // 💥 Trigger logic based on counter
-        if (crashCounter >= CRASH_LIMIT_SAFE || runtimeCrashCounter >= CRASH_LIMIT_SAFE) {
+        if (crashCounter >= CRASH_LIMIT_SAFE || runtimeCrashCounter >= CRASH_LIMIT_SAFE)
+        {
             logMessage(LOG_ERROR, "🚨 Crash limit exceeded! Entering Safe Mode...");
-            //enterSafeMode(); 
+            // enterSafeMode();
         }
-        else if (crashCounter >= CRASH_LIMIT_RESET || runtimeCrashCounter >= CRASH_LIMIT_RESET) {
+        else if (crashCounter >= CRASH_LIMIT_RESET || runtimeCrashCounter >= CRASH_LIMIT_RESET)
+        {
             logMessage(LOG_WARN, "⚠️ Crash count hit reset threshold. Resetting parameters...");
             xTaskCreatePinnedToCore(SmartCore_System::resetWorkerTask, "ResetWorker", 4096, NULL, 1, NULL, 0);
         }
 
         // Store resetConfig (might be set by resetWorkerTask)
         resetConfig = SmartCore_EEPROM::readResetConfigFlag();
-}
-     
-    void init() {
+    }
 
-        if (!LittleFS.begin()) {
-           logMessage(LOG_ERROR, "❌ LittleFS mount failed!");
-            while (true) yield();
-        }else {
+    void init()
+    {
+
+        if (!LittleFS.begin())
+        {
+            logMessage(LOG_ERROR, "❌ LittleFS mount failed!");
+            while (true)
+                yield();
+        }
+        else
+        {
             logMessage(LOG_WARN, "✅  LittleFS mounted sucessfully!");
         }
-        
-        xTaskCreatePinnedToCore(checkresetButtonTask,   "Check Reset Button",  4096, NULL, 1, &resetButtonTaskHandle,        0);
-        initSmartCoreLED();
+
+        loadMqttPriorityList();
+
+        xTaskCreatePinnedToCore(checkresetButtonTask, "Check Reset Button", 4096, NULL, 1, &resetButtonTaskHandle, 0);
+        SmartCore_LED::initSmartCoreLED();
         SmartCore_I2C::init();
         SmartCore_MCP::init();
         //  SmartNet init + task
-       // if (SmartCore_SmartNet::initSmartNet()) {
-            xTaskCreatePinnedToCore(SmartCore_SmartNet::smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &SmartCore_SmartNet::smartNetTaskHandle, 1);
-      /*  } else {
-            logMessage(LOG_ERROR, "❌ Failed to initialize SmartNet CAN bus");
-        }*/
+        // if (SmartCore_SmartNet::initSmartNet()) {
+        xTaskCreatePinnedToCore(SmartCore_SmartNet::smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &SmartCore_SmartNet::smartNetTaskHandle, 1);
+        /*  } else {
+              logMessage(LOG_ERROR, "❌ Failed to initialize SmartNet CAN bus");
+          }*/
         SmartCore_WiFi::startWiFiProvisionTask();
-        
     }
 
-    void getModuleConfig() {
+    void getModuleConfig()
+    {
         logMessage(LOG_INFO, "Inside getModuleConfig");
         // Read serial number
         strncpy(serialNumber, SmartCore_EEPROM::readSerialNumberFromEEPROM(), sizeof(serialNumber) - 1);
         serialNumber[sizeof(serialNumber) - 1] = '\0'; // Ensure null-termination
         logMessage(LOG_INFO, "get config --- serialnumber: " + String(serialNumber));
-    
-        location = SmartCore_EEPROM::readLocationFromEEPROM();   
+
+        location = SmartCore_EEPROM::readLocationFromEEPROM();
 
         // Read first WiFi connect flag
         firstWiFiConnect = SmartCore_EEPROM::readFirstWiFiConnectFlag();
@@ -144,122 +168,143 @@ namespace SmartCore_System {
         // Read serial number assigned flag
         serialNumberAssigned = SmartCore_EEPROM::readSerialNumberAssignedFlag();
         logMessage(LOG_INFO, "🧠 serialNumberAssigned: " + String(serialNumberAssigned));
-    
+
         SmartCore_OTA::isUpgradeAvailable = SmartCore_EEPROM::loadUpgradeFlag();
-    
+
         moduleName = SmartCore_EEPROM::readModuleNameFromEEPROM();
 
-        getModuleSpecificConfig();  //call module specific config here
+        getModuleSpecificConfig(); // call module specific config here
     }
 
-    void createAppTasks() {
-        //xTaskCreatePinnedToCore(otaTask, "OTA Task", 16384, NULL, 2, &otaTaskHandle, 0);
-        //xTaskCreatePinnedToCore(smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &smartNetTaskHandle, 1);
+    void createAppTasks()
+    {
+        // xTaskCreatePinnedToCore(otaTask, "OTA Task", 16384, NULL, 2, &otaTaskHandle, 0);
+        // xTaskCreatePinnedToCore(smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &smartNetTaskHandle, 1);
     }
 
-
-    void checkresetButtonTask(void *parameter) {
-        for (;;) {
+    void checkresetButtonTask(void *parameter)
+    {
+        for (;;)
+        {
             bool currentButtonState = digitalRead(buttonPin) == LOW;
-    
-            if (currentButtonState) {
-                if (!buttonPressed) {
+
+            if (currentButtonState)
+            {
+                if (!buttonPressed)
+                {
                     buttonPressStart = millis();
                     buttonPressed = true;
-                } else {
-                    if (millis() - buttonPressStart >= holdTime) {
+                }
+                else
+                {
+                    if (millis() - buttonPressStart >= holdTime)
+                    {
                         logMessage(LOG_INFO, "🟢 Reset module triggered — launching reset worker...");
-    
+
                         // Clear handle BEFORE deleting self
                         resetButtonTaskHandle = NULL;
-    
+
                         // Spawn reset worker task
                         xTaskCreatePinnedToCore(resetWorkerTask, "ResetWorker", 4096, NULL, 1, NULL, 0);
-    
+
                         // Kill this task
                         vTaskDelete(NULL);
                     }
                 }
-            } else {
+            }
+            else
+            {
                 buttonPressed = false;
             }
-    
+
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 
-    void resetWorkerTask(void *param) {
+    void resetWorkerTask(void *param)
+    {
         Serial.println("🧹 Suspending other tasks...");
         TaskHandle_t currentTask = xTaskGetCurrentTaskHandle();
-    
-        struct TaskEntry {
-            const char* name;
+
+        struct TaskEntry
+        {
+            const char *name;
             TaskHandle_t handle;
         };
-    
+
         TaskEntry tasks[] = {
-            { "metricsTaskHandle", SmartCore_MQTT::metricsTaskHandle },
-            { "timeSyncTaskHandle", SmartCore_MQTT::timeSyncTaskHandle },
-            { "flashLEDTaskHandle", flashLEDTaskHandle },
+            {"metricsTaskHandle", SmartCore_MQTT::metricsTaskHandle},
+            {"timeSyncTaskHandle", SmartCore_MQTT::timeSyncTaskHandle},
+            {"flashLEDTaskHandle", flashLEDTaskHandle},
             //{ "provisioningBlinkTaskHandle", provisioningBlinkTaskHandle }
             // Exclude OTA / WiFi tasks that could crash during suspend
         };
-    
-        for (const auto& task : tasks) {
+
+        for (const auto &task : tasks)
+        {
             Serial.printf("[DEBUG] Suspending: %s (%p)...\n", task.name, task.handle);
-            if (task.handle && task.handle != currentTask) {
+            if (task.handle && task.handle != currentTask)
+            {
                 vTaskSuspend(task.handle);
                 Serial.printf("   ✅ %s suspended\n", task.name);
             }
         }
-    
+
         // ✅ Module-specific suspends (if any)
         suspendModuleTasksDuringReset();
-    
+
         Serial.println("✅ All safe tasks suspended.");
-    
+
         // 🔧 Now it's safe to reset parameters
         SmartCore_EEPROM::resetParameters();
-    
-        setRGBColor(0, 255, 0);  // 🟢 Feedback
+
+        SmartCore_LED::setRGBColor(0, 255, 0); // 🟢 Feedback
         vTaskDelay(pdMS_TO_TICKS(200));
-    
+
         Serial.println("♻️ Restarting...");
         esp_restart();
-    } 
+    }
 
-    void clearCrashCounter(CrashCounterType type) {
+    void clearCrashCounter(CrashCounterType type)
+    {
         bool changed = false;
-    
-        if (type == CRASH_COUNTER_BOOT || type == CRASH_COUNTER_ALL) {
-            if (EEPROM.read(CRASH_COUNTER_ADDR) != 0) {
+
+        if (type == CRASH_COUNTER_BOOT || type == CRASH_COUNTER_ALL)
+        {
+            if (EEPROM.read(CRASH_COUNTER_ADDR) != 0)
+            {
                 EEPROM.write(CRASH_COUNTER_ADDR, 0);
                 logMessage(LOG_INFO, "✅ Boot crash counter reset to 0.");
                 changed = true;
             }
         }
-    
-        if (type == CRASH_COUNTER_RUNTIME || type == CRASH_COUNTER_ALL) {
-            if (EEPROM.read(RUNTIME_CRASH_COUNTER_ADDR) != 0) {
+
+        if (type == CRASH_COUNTER_RUNTIME || type == CRASH_COUNTER_ALL)
+        {
+            if (EEPROM.read(RUNTIME_CRASH_COUNTER_ADDR) != 0)
+            {
                 EEPROM.write(RUNTIME_CRASH_COUNTER_ADDR, 0);
                 logMessage(LOG_INFO, "✅ Runtime crash counter reset to 0.");
                 changed = true;
             }
         }
-    
-        if (changed) {
+
+        if (changed)
+        {
             EEPROM.commit();
-        } else {
+        }
+        else
+        {
             logMessage(LOG_INFO, "ℹ️ Crash counters already at 0. No changes written.");
         }
     }
-    
 
-    void enterSafeMode() {
+    void enterSafeMode()
+    {
         logMessage(LOG_ERROR, "🧯 Entering SAFE MODE — minimal services only.");
-        initSmartCoreLED();
-        setRGBColor(255, 255, 0);
-    
+        SmartCore_LED::initSmartCoreLED();
+        SmartCore_LED::setRGBColor(255, 255, 0);
+
         // WiFi AP setup for recovery
         WiFi.disconnect(true, false);
         delay(100);
@@ -267,12 +312,13 @@ namespace SmartCore_System {
         String apSsid = String(SmartCore_System::getModuleSettings().apSSID) + "_RECOVERY";
         WiFi.softAP(apSsid.c_str(), nullptr);
         logMessage(LOG_INFO, "🛟 Safe Mode AP SSID: " + apSsid);
-    
+
         // Start Web Server
         static AsyncWebServer safeServer(81);
 
         safeWs.onEvent([](AsyncWebSocket *server, AsyncWebSocketClient *client,
-            AwsEventType type, void *arg, uint8_t *data, size_t len) {
+                          AwsEventType type, void *arg, uint8_t *data, size_t len)
+                       {
         if (type == WS_EVT_CONNECT) {
         Serial.println("🌐 Recovery WS client connected");
         } else if (type == WS_EVT_DISCONNECT) {
@@ -281,12 +327,12 @@ namespace SmartCore_System {
         Serial.println("❌ WS error occurred");
         } else if (type == WS_EVT_DATA) {
         Serial.println("💬 WS data received (ignored in Safe Mode)");
-        }
-        });
+        } });
 
         safeServer.addHandler(&safeWs);
-    
-        safeServer.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+
+        safeServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+                      {
             Serial.println("on recovery portal homepage");
             String html = R"rawliteral(
             <!DOCTYPE html>
@@ -364,20 +410,20 @@ namespace SmartCore_System {
             </body>
             </html>
             )rawliteral";
-            request->send(200, "text/html", html);
-        });
-    
-        safeServer.on("/retry", HTTP_GET, [](AsyncWebServerRequest* request) {
+            request->send(200, "text/html", html); });
+
+        safeServer.on("/retry", HTTP_GET, [](AsyncWebServerRequest *request)
+                      {
             logMessage(LOG_WARN, "🧹 Safe Mode: Clearing crash counters...");
             EEPROM.write(CRASH_COUNTER_ADDR, 0);
             EEPROM.write(RUNTIME_CRASH_COUNTER_ADDR, 0);
             EEPROM.commit();
             request->send(200, "text/plain", "Rebooting...");
             delay(1000);
-            ESP.restart();
-        });
-    
-        safeServer.on("/clear", HTTP_GET, [](AsyncWebServerRequest* request) {
+            ESP.restart(); });
+
+        safeServer.on("/clear", HTTP_GET, [](AsyncWebServerRequest *request)
+                      {
             logMessage(LOG_WARN, "🧹 Safe Mode: Clearing EEPROM and reset counters...");
             SmartCore_EEPROM::resetParameters();
             EEPROM.write(CRASH_COUNTER_ADDR, 0);
@@ -389,10 +435,10 @@ namespace SmartCore_System {
             }
             request->send(200, "text/plain", "EEPROM cleared. Rebooting...");
             delay(1000);
-            ESP.restart();
-        });
-    
-        safeServer.on("/update", HTTP_GET, [](AsyncWebServerRequest* request) {
+            ESP.restart(); });
+
+        safeServer.on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
+                      {
             logMessage(LOG_INFO, "📦 OTA update triggered via recovery UI");
             request->send(200, "text/plain", "Starting OTA task...");
         
@@ -401,42 +447,112 @@ namespace SmartCore_System {
             delay(2000);
         
             SmartCore_OTA::shouldUpdateFirmware = true;
-            xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTAUpdate", 8192, NULL, 1, NULL, 0);
-        });
-    
-        safeServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest* request) {
+            xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTAUpdate", 8192, NULL, 1, NULL, 0); });
+
+        safeServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request)
+                      {
             request->send(200, "text/plain", "Reset Wifi details and restart SmartConnect...");
             WiFi.disconnect(true, true);
             delay(1000);
-            ESP.restart();
-        });
-    
+            ESP.restart(); });
+
         safeServer.begin();
         logMessage(LOG_INFO, "✅ Safe Mode web server started.");
         logMessage(LOG_INFO, "🌐 ESP local IP: " + WiFi.localIP().toString());
-    
+
         // Blink LED while in Safe Mode
         unsigned long lastBlink = millis();
         bool ledOn = false;
-    
-        while (true) {
-            if (!inOTAUpdate) {
-                if (millis() - lastBlink > 500) {
+
+        while (true)
+        {
+            if (!inOTAUpdate)
+            {
+                if (millis() - lastBlink > 500)
+                {
                     ledOn = !ledOn;
-                    if (ledOn) {
-                        setRGBColor(255, 255, 0);
-                    } else {
-                        turnOffRGBLEDs();
+                    if (ledOn)
+                    {
+                        SmartCore_LED::setRGBColor(255, 255, 0);
+                    }
+                    else
+                    {
+                        SmartCore_LED::turnOffRGBLEDs();
                     }
                     lastBlink = millis();
                 }
             }
-        
+
             safeWs.cleanupClients();
             delay(10); // Allow tasks and OTA to breathe
         }
     }
-    
-    
+
+    void loadMqttPriorityList()
+    {
+        int rawHigh = EEPROM.read(MQTT_PRIORITY_COUNT_ADDR);
+        int rawLow = EEPROM.read(MQTT_PRIORITY_COUNT_ADDR + 1);
+
+        Serial.printf("🔍 DEBUG: Raw count bytes: [%d][%d]\n", rawHigh, rawLow);
+
+        mqttPriorityCount = SmartCore_EEPROM::readIntFromEEPROM(MQTT_PRIORITY_COUNT_ADDR);
+
+        Serial.printf("🔍 DEBUG: mqttPriorityCount read = %d\n", mqttPriorityCount);
+
+        if (mqttPriorityCount < 0 || mqttPriorityCount > 3)
+        {
+            Serial.println("⚠️ DEBUG: Invalid count. Resetting to 0");
+            mqttPriorityCount = 0;
+        }
+
+        for (int i = 0; i < mqttPriorityCount; i++)
+        {
+            String stored = SmartCore_EEPROM::readStringFromEEPROM(
+                MQTT_PRIORITY_LIST_ADDR + (i * 17),
+                17);
+
+            Serial.printf("🔍 DEBUG: Loaded slot %d raw = '%s'\n", i, stored.c_str());
+
+            strncpy(mqttPriorityList[i], stored.c_str(), 16);
+            mqttPriorityList[i][16] = '\0';
+        }
+
+        Serial.printf("🔄 Loaded %d MQTT priority servers:\n", mqttPriorityCount);
+        for (int i = 0; i < mqttPriorityCount; i++)
+        {
+            Serial.printf("   [%d] %s\n", i, mqttPriorityList[i]);
+        }
+    }
+
 }
 
+// =============================================================
+//  WEAK CALLBACK: SmartBox provisioning (overridden on SmartBox)
+// =============================================================
+extern "C" __attribute__((weak)) void SmartBox_notifyProvisionReceived(
+    const String &ssid,
+    const String &password,
+    const String &serial,
+    bool mqttStatic,
+    const String &staticIp,
+    const String &subnetMask,
+    const String ipList[], // ordered SmartBox list
+    int ipCount,           // number of SmartBoxes
+    int priority,          // my priority (1 = primary)
+    int mqttPort)
+{
+    // non-SmartBox modules do nothing
+}
+
+// =============================================================
+//  WEAK CALLBACKS (SmartBox will override)
+// =============================================================
+extern "C" __attribute__((weak)) void SmartBox_notifyBecomePrimary()
+{
+    // non-SmartBox modules do nothing
+}
+
+extern "C" __attribute__((weak)) void SmartBox_notifySetBroker(const String &newIp)
+{
+    // non-SmartBox modules do nothing
+}
