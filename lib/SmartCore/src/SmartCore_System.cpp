@@ -21,6 +21,7 @@
 #include "SmartCore_OTA.h"
 #include "config.h"
 #include "module_reset.h"
+#include "FirmwareVersion.h"
 
 
 namespace SmartCore_System
@@ -251,8 +252,7 @@ namespace SmartCore_System
 
     void createAppTasks()
     {
-        // xTaskCreatePinnedToCore(otaTask, "OTA Task", 16384, NULL, 2, &otaTaskHandle, 0);
-        // xTaskCreatePinnedToCore(smartNetTask, "SmartNet_RX_Task", 4096, NULL, 1, &smartNetTaskHandle, 1);
+         xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTA Task", 16384, NULL, 2, &SmartCore_OTA::otaTaskHandle, 0);
     }
 
     void checkresetButtonTask(void *parameter)

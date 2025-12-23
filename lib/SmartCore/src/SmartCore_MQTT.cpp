@@ -13,6 +13,7 @@
 #include <otadrive_esp.h>
 #include "mqtt_handlers.h"
 #include "SmartCore_OTA.h"
+#include "FirmwareVersion.h"
 
 volatile bool mqttResetPending = false;
 volatile bool mqttDisconnectInProgress = false;
@@ -471,7 +472,7 @@ namespace SmartCore_MQTT
         Serial.println("✅ Subscribed to update/#");
 
         // Publish initial presence messages
-        mqttClient->publish((String(mqttPrefix) + "/connected").c_str(), 1, true, "connected");
+        mqttSafePublish((String(mqttPrefix) + "/connected").c_str(), 1, true, "connected");
         requestSmartBoatTime();
 
         logMessage(LOG_INFO, "🔍 firstWifiCOnnect: " + String(firstWiFiConnect ? "true" : "false"));
@@ -506,7 +507,7 @@ namespace SmartCore_MQTT
 
             if (mqttClient->connected())
             {
-                mqttClient->publish(topic, 1, true, payload.c_str());
+                mqttSafePublish(topic, 1, true, payload.c_str());
                 logMessage(LOG_INFO, "✅ MQTT publish call made.");
             }
             else
@@ -654,7 +655,7 @@ namespace SmartCore_MQTT
 
             String payload;
             serializeJson(response, payload);
-            mqttClient->publish("module/config/update", 1, true, payload.c_str());
+            mqttSafePublish("module/config/update", 1, true, payload.c_str());
             Serial.println("✅ Published generic module config");
 
             // ✅ Forward object to module-specific handler too
@@ -711,6 +712,7 @@ namespace SmartCore_MQTT
     void handleErrorMessage(const String &message)
     {
         Serial.println("message arrived for errors");
+        Serial.printf("bootSafeMode=%d\n", SmartCore_System::bootSafeMode);
         handleModuleSpecificErrors(message);  // <<-- incase module specific error code required
 
         StaticJsonDocument<256> doc;
@@ -722,7 +724,13 @@ namespace SmartCore_MQTT
             return;
         }
 
+        Serial.println("🔥 ABOUT TO PARSE ACTION");
+
         const char *action = doc["action"] | "";
+
+        Serial.printf("ACTION RAW PTR: %p\n", action);
+        Serial.printf("ACTION VALUE : [%s]\n", action ? action : "NULL");
+        Serial.printf("ACTION LEN   : %d\n", action ? strlen(action) : -1);
 
         if (!strcmp(action, "softReset"))
         {
@@ -733,6 +741,42 @@ namespace SmartCore_MQTT
 
             delay(300);
             ESP.restart();
+        } else if (!strcmp(action, "safeFirmware"))
+        {
+            logMessage(LOG_WARN, "🧯 Safe Firmware requested via MQTT");
+
+            SmartCore_OTA::initOtaKey();
+
+            // 🚫 Do not start another OTA if one is already running
+            if (SmartCore_OTA::otaInProgress)
+            {
+                logMessage(LOG_WARN, "⚠️ OTA already in progress — ignoring request");
+                return;
+            }
+
+            SmartCore_OTA::shouldUpdateFirmware = true;
+
+            // 🧠 Ensure OTA task exists
+            if (SmartCore_OTA::otaTaskHandle == nullptr)
+            {
+                logMessage(LOG_INFO, "🧵 OTA task missing — creating it");
+
+                xTaskCreatePinnedToCore(
+                    SmartCore_OTA::otaTask,
+                    "OTATask",
+                    8192,
+                    nullptr,
+                    1,
+                    &SmartCore_OTA::otaTaskHandle,
+                    1
+                );
+            }
+            else
+            {
+                logMessage(LOG_INFO, "🧵 OTA task already present");
+            }
+
+            logMessage(LOG_INFO, "📦 OTA flagged — handled by OTA task");
         }
     }
 
@@ -822,7 +866,7 @@ namespace SmartCore_MQTT
 
             if (mqttIsConnected && mqttClient)
             {
-                mqttClient->publish("module/upgrade", 0, false, responseJson.c_str());
+                mqttSafePublish("module/upgrade", 0, false, responseJson.c_str());
             }
             Serial.println("✅ OTA check response published.");
         }
@@ -831,6 +875,27 @@ namespace SmartCore_MQTT
             Serial.println("⚠️ Unsupported action in upgrade message.");
         }
     }
+
+     bool mqttSafePublish(
+        const char* topic,
+        uint8_t qos,
+        bool retain,
+        const char* payload,
+        size_t len
+    ) {
+        if (!mqttClient || !mqttIsConnected)
+            return false;
+
+        if (SmartCore_OTA::otaInProgress)
+            return false;
+
+        
+    if (len > 0)
+        return mqttClient->publish(topic, qos, retain, payload, len);
+    else
+        return mqttClient->publish(topic, qos, retain, payload);
+    }
+
 
     void handleUpdateMessage(const String &message)
     {
@@ -982,7 +1047,7 @@ namespace SmartCore_MQTT
             char buffer[512];
             size_t len = serializeJson(doc, buffer);
 
-            mqttClient->publish("module/metrics", 0, false, buffer, len);
+            mqttSafePublish("module/metrics", 0, false, buffer, len);
             logMessage(LOG_INFO, "📤 Metrics sent → " + String(buffer));
 
             vTaskDelay(10000 / portTICK_PERIOD_MS); // 10s loop
@@ -1013,7 +1078,7 @@ namespace SmartCore_MQTT
         char payload[128];
         serializeJson(doc, payload, sizeof(payload));
 
-        mqttClient->publish("module/update", 1, false, payload);
+        mqttSafePublish("module/update", 1, false, payload);
         awaitingSmartboatTimeSync = true;
 
         Serial.println("📡 Time sync requested via module/update");
@@ -1059,7 +1124,7 @@ void publishModuleError(
     String payload;
     serializeJson(doc, payload);
 
-    mqttClient->publish(
+    mqttSafePublish(
         "module/error",
         1,          // QoS
         false,      // NOT retained

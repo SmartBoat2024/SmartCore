@@ -8,19 +8,30 @@
 #include "SmartCore_Network.h"
 #include "SmartCore_SmartNet.h"
 #include "SmartCore_EEPROM.h"
+#include "FirmwareVersion.h"
+#include "config.h"
 
 // Removed: #include <AsyncWebSocket.h>
 
 namespace SmartCore_OTA {
     bool isUpgradeAvailable = false;
     bool shouldUpdateFirmware = false;
+    volatile bool otaInProgress = false;
 
     TaskHandle_t otaTaskHandle = NULL;
 
     void otaTask(void *parameter) {
         while (true) {
+
+            if (otaInProgress)
+            {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                continue;
+            }
+
             if (shouldUpdateFirmware) {
                 logMessage(LOG_INFO, "🚀 Starting OTA update...");
+                otaInProgress = true;
 
                 if (flashLEDTaskHandle) vTaskSuspend(flashLEDTaskHandle);
                 if (wifiMqttCheckTaskHandle) vTaskSuspend(wifiMqttCheckTaskHandle);
@@ -29,6 +40,9 @@ namespace SmartCore_OTA {
                 if (SmartCore_MQTT::metricsTaskHandle) vTaskSuspend(SmartCore_MQTT::metricsTaskHandle);
                 if (SmartCore_MQTT::timeSyncTaskHandle) vTaskSuspend(SmartCore_MQTT::timeSyncTaskHandle);
                 if (SmartCore_SmartNet::smartNetTaskHandle) vTaskSuspend(SmartCore_SmartNet::smartNetTaskHandle);
+
+                logMessage(LOG_INFO, "🚀 Clearing Crash Counters - OTA update...");
+                SmartCore_System::clearCrashCounter(CRASH_COUNTER_ALL);
 
                 ota();  // 🔁 OTA handler
 
@@ -41,6 +55,7 @@ namespace SmartCore_OTA {
                 if (SmartCore_SmartNet::smartNetTaskHandle) vTaskResume(SmartCore_SmartNet::smartNetTaskHandle);
 
                 logMessage(LOG_INFO, "✅ OTA complete. System tasks resumed.");
+                otaInProgress = false;
                 shouldUpdateFirmware = false;
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -82,7 +97,7 @@ namespace SmartCore_OTA {
 
         String payload_status;
         serializeJson(status_response, payload_status);
-        mqttClient->publish("module/config/update", 1, true, payload_status.c_str());
+        SmartCore_MQTT::mqttSafePublish("module/config/update", 1, true, payload_status.c_str());
 
         Serial.println("✅ Published generic module config");
 
@@ -110,7 +125,7 @@ namespace SmartCore_OTA {
 
         String payload;
         serializeJson(response, payload);
-        mqttClient->publish("module/config/update", 1, true, payload.c_str());
+        SmartCore_MQTT::mqttSafePublish("module/config/update", 1, true, payload.c_str());
 
         Serial.println("✅ Published generic module config");
 
@@ -121,4 +136,29 @@ namespace SmartCore_OTA {
             logMessage(LOG_WARN, "OTA update failed or no update available.");
         }
     }
+
+    void initOtaKey()
+{
+    const char* selectedKey;
+    const char* reportedVersion;
+
+    if (SmartCore_System::bootSafeMode)
+    {
+        selectedKey = SAFE_APIKEY;
+        reportedVersion = "v0.0.1";   // sentinel, intentionally low
+    }
+    else
+    {
+        selectedKey = APIKEY;
+        reportedVersion = FW_VER;     // real firmware version
+    }
+
+    OTADRIVE.setInfo(selectedKey, reportedVersion);
+
+    Serial.printf(
+        "🔐 OTA identity: %s | reported version: %s\n",
+        SmartCore_System::bootSafeMode ? "SAFE" : "PRIMARY",
+        reportedVersion
+    );
+}
 }
