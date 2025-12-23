@@ -20,7 +20,7 @@ bool firstWiFiConnect = true;
 volatile bool provisioningComplete = false;
 
 // --- MQTT State ---
-AsyncMqttClient* mqttClient = nullptr;
+AsyncMqttClient *mqttClient = nullptr;
 bool awaitingSmartboatTimeSync = true;
 uint32_t smartBoatEpoch = 0;
 uint32_t smartBoatEpochSyncMillis = 0;
@@ -29,12 +29,11 @@ unsigned long mqttReconnectInterval = 5000;
 char mqtt_server[16] = "";
 int mqtt_port = 1883;
 char mqtt_user[50] = "";
-const char* mqtt_user_prefix = "rel";
+const char *mqtt_user_prefix = "rel";
 bool mqttIsConnected = false;
-char mqttPrefix[6] ="";  // 4 chars + nul
+char mqttPrefix[6] = ""; // 4 chars + nul
 
 // --- Mode Flags ---
 bool resetConfig = true;
 bool autoProvisioned = false;
 bool serialNumberAssigned = false;
-

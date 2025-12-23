@@ -6,10 +6,11 @@
 #include "SmartCore_I2C.h"
 #include "SmartCore_MCP.h"
 #include "config.h"
+#include "FirmwareVersion.h"
 
 // Define the EEPROM size and the end of the SmartCore settings
 #define EEPROM_SIZE 1024
-#define SMARTCORE_EEPROM_END 300  // SmartCore settings end at address 200
+#define SMARTCORE_EEPROM_END 400  // SmartCore settings end at address 200
 
 
 // ========================
@@ -42,6 +43,12 @@ void setup() {
     }  
   
     SmartCore_System::init();
+
+    if (SmartCore_System::bootSafeMode)
+    {
+        Serial.println("🧯 SAFE MODE ACTIVE — module code skipped");
+        return;
+    }
 
   // Custom module setup code goes here:
   // Initialize sensors, modules, etc.

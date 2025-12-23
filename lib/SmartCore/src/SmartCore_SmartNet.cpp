@@ -245,7 +245,7 @@ namespace SmartCore_SmartNet {
                 //sendHeartbeat();  // ❤️ Send heartbeat every second
                 
                 // 🧠 Runtime liveness confirmed
-                SmartCore_System::clearCrashCounter(CRASH_COUNTER_RUNTIME);
+                //SmartCore_System::clearCrashCounter(CRASH_COUNTER_RUNTIME);
                 
                 lastHeartbeat = millis();
             }

@@ -7,7 +7,7 @@ void handleModuleSpecificConfig(const JsonObject& doc) {
     // TODO: Add configuration-specific logic here
 }
 
-void handleModuleSpecificModule(const String& message) {
+void handleModuleSpecificModule(const String &message) {
     Serial.println("📦 [Template] handleModuleSpecificModule() called.");
     // TODO: Add module-specific handling here
 }
