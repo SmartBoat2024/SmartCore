@@ -4,5 +4,5 @@
 #include <ArduinoJson.h>
 
 void handleModuleSpecificConfig(const JsonObject& doc);
-void handleModuleSpecificModule(const String& message);
+void handleModuleSpecificModule(const JsonObject& doc);
 void handleModuleSpecificErrors(const String& message);

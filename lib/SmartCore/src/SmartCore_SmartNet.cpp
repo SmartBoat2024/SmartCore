@@ -7,6 +7,7 @@
 #include "config.h"
 #include "SmartCore_Log.h"
 #include "SmartCore_System.h"
+#include "FirmwareVersion.h"
 
 namespace SmartCore_SmartNet {
 

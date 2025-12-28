@@ -704,10 +704,19 @@ namespace SmartCore_MQTT
     }
 
     void handleModuleMessage(const String &message)
+{
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, message);
+
+    if (error)
     {
-        Serial.println("message arrived for module");
-        handleModuleSpecificModule(message);
+        logMessage(LOG_WARN, "❌ Failed to parse module JSON");
+        return;
     }
+
+    handleModuleSpecificModule(doc.as<JsonObject>());
+}
+
 
     void handleErrorMessage(const String &message)
     {
