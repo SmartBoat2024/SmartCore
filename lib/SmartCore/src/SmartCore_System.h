@@ -8,6 +8,7 @@
 
 #define CRASH_LIMIT_RESET 3
 #define CRASH_LIMIT_SAFE 6
+constexpr uint32_t RUNTIME_STABILITY_WINDOW_MS = 30000;
 
 enum BootFaultReason {
     BOOT_FAULT_NONE,
@@ -31,9 +32,9 @@ enum ModuleErrorCode {
 
 namespace SmartCore_System
 {
-    extern volatile bool runtimeStable;
-    extern volatile uint32_t runtimeStableSince;
+    extern volatile bool runtimeStableConfirmed;
 
+    
     void markRuntimeStable();
 
     extern const unsigned long holdTime;
@@ -42,6 +43,7 @@ namespace SmartCore_System
 
     extern TaskHandle_t otaTaskHandle;
     extern TaskHandle_t resetButtonTaskHandle;
+    extern TaskHandle_t runtimeGuardianTaskHandle;
     extern volatile bool bootSafeMode;
     extern volatile BootFaultReason bootFault;
 
@@ -56,6 +58,7 @@ namespace SmartCore_System
     void clearCrashCounter(CrashCounterType type);
     void enterSafeMode();
     void loadMqttPriorityList();
+    void runtimeGuardianTask(void *parameter);
 
 }
 

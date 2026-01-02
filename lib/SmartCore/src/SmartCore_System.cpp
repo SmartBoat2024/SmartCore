@@ -28,6 +28,7 @@ namespace SmartCore_System
 {
 
     TaskHandle_t resetButtonTaskHandle = NULL;
+    TaskHandle_t runtimeGuardianTaskHandle = NULL;
 
     const unsigned long holdTime = 5000;
     unsigned long buttonPressStart = 0;
@@ -41,25 +42,14 @@ namespace SmartCore_System
     volatile bool bootSafeMode = false;
     volatile BootFaultReason bootFault = BOOT_FAULT_NONE;
 
-    volatile bool runtimeStable = false;
-    volatile uint32_t runtimeStableSince = 0;
+
+    volatile bool runtimeStableConfirmed = false;
 
     static SmartCoreSettings _settings = {
         .serialNumber = "UNKNOWN",
         .moduleName = "Generic SmartCore",
         .apSSID = "SmartModule"};
 
-    void markRuntimeStable()
-    {
-        if (!runtimeStable)
-        {
-            runtimeStable = true;
-            runtimeStableSince = millis();
-
-            logMessage(LOG_INFO,
-                "🧠 Runtime marked STABLE — starting stability timer");
-        }
-    }
 
     void setModuleSettings(const SmartCoreSettings &settings)
     {
@@ -252,7 +242,8 @@ namespace SmartCore_System
 
     void createAppTasks()
     {
-         xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTA Task", 16384, NULL, 2, &SmartCore_OTA::otaTaskHandle, 0);
+        xTaskCreatePinnedToCore(SmartCore_OTA::otaTask, "OTA Task", 16384, NULL, 2, &SmartCore_OTA::otaTaskHandle, 0);
+        xTaskCreatePinnedToCore(runtimeGuardianTask, "Runtime Guardian Task", 2048, NULL, 2, &runtimeGuardianTaskHandle, 1);
     }
 
     void checkresetButtonTask(void *parameter)
@@ -596,6 +587,33 @@ namespace SmartCore_System
             Serial.printf("   [%d] %s\n", i, mqttPriorityList[i]);
         }
     }
+
+    void runtimeGuardianTask(void *parameter)
+{
+    uint32_t start = millis();
+
+    for (;;)
+    {
+        if (SmartCore_System::bootSafeMode)
+        {
+            logMessage(LOG_WARN,
+                "🧯 RuntimeGuardian aborted — SAFE MODE active");
+            vTaskDelete(nullptr);
+        }
+
+        if (millis() - start >= RUNTIME_STABILITY_WINDOW_MS)
+        {
+            SmartCore_System::clearCrashCounter(CRASH_COUNTER_RUNTIME);
+            logMessage(LOG_INFO,
+                "🟢 Runtime crash counter cleared (scheduler survived)");
+            vTaskDelete(nullptr);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+
 
 }
 

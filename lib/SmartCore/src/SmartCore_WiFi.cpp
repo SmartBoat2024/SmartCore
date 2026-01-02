@@ -636,6 +636,8 @@ namespace SmartCore_WiFi
         }
 
         SmartCore_System::createAppTasks();
+
+        SmartCore_MQTT::checkForUpgrade(false);
     }
 
     void waitForValidIP()

@@ -459,8 +459,6 @@ namespace SmartCore_MQTT
             );
         }
 
-        SmartCore_System::markRuntimeStable();
-
         // Subscribe to module-specific topic: serialNumber/#
         String serialTopic = String(serialNumber) + "/#";
         mqttClient->subscribe(serialTopic.c_str(), 1);
@@ -701,6 +699,8 @@ namespace SmartCore_MQTT
         {
             Serial.printf("⚠️ Unknown config message type: '%s'\n", type.c_str());
         }
+
+        checkForUpgrade(false);
     }
 
     void handleModuleMessage(const String &message)
@@ -716,7 +716,6 @@ namespace SmartCore_MQTT
 
     handleModuleSpecificModule(doc.as<JsonObject>());
 }
-
 
     void handleErrorMessage(const String &message)
     {
@@ -857,7 +856,18 @@ namespace SmartCore_MQTT
         }
         else if (action == "checkUpdateAvailable")
         {
-            Serial.println("🔍 Checking for OTA update availability...");
+            bool notify = true;
+            checkForUpgrade(notify);
+            
+        }
+        else
+        {
+            Serial.println("⚠️ Unsupported action in upgrade message.");
+        }
+    }
+
+    void checkForUpgrade(bool notify = false){
+        Serial.println("🔍 Checking for OTA update availability...");
             updateInfo inf = OTADRIVE.updateFirmwareInfo();
 
             SmartCore_EEPROM::saveUpgradeFlag(inf.available);
@@ -869,6 +879,7 @@ namespace SmartCore_MQTT
             response["currentVersion"] = FW_VER;
             response["latestVersion"] = inf.available ? inf.version.c_str() : "N/A";
             response["message"] = inf.available ? "Upgrade available." : "System is up to date.";
+            response["notify"] = notify;
 
             String responseJson;
             serializeJson(response, responseJson);
@@ -878,11 +889,6 @@ namespace SmartCore_MQTT
                 mqttSafePublish("module/upgrade", 0, false, responseJson.c_str());
             }
             Serial.println("✅ OTA check response published.");
-        }
-        else
-        {
-            Serial.println("⚠️ Unsupported action in upgrade message.");
-        }
     }
 
      bool mqttSafePublish(
@@ -993,17 +999,6 @@ namespace SmartCore_MQTT
 
         logMessage(LOG_INFO, "📊 Metrics task started.");
 
-        if (SmartCore_System::runtimeStable &&
-            millis() - SmartCore_System::runtimeStableSince > 30000) // 30s
-        {
-            SmartCore_System::clearCrashCounter(CRASH_COUNTER_RUNTIME);
-
-            // One-shot
-            SmartCore_System::runtimeStable = false;
-
-            logMessage(LOG_INFO,
-                "🟢 Runtime crash counter cleared after sustained stability");
-        }
 
         // Simulate a crash during startup
         //int* ptr = nullptr;

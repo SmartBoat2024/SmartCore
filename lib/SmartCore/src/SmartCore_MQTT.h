@@ -39,6 +39,7 @@ namespace SmartCore_MQTT
     void handleModuleMessage(const String &message);
     void handleResetMessage(const String &message);
     void requestSmartBoatTime();
+    void checkForUpgrade(bool notify);
     void timeSyncTask(void *parameter);
     void hardResetClient();
     bool fetchMQTTConfig(String &mqttIp, uint16_t &mqttPort);

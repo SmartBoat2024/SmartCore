@@ -368,6 +368,22 @@ namespace SmartCore_LED
 
             uint32_t now = millis();
 
+            // ------------------------------------------------------
+            // Runtime stability hint (NON-AUTHORITATIVE)
+            // ------------------------------------------------------
+            static bool stabilityHintSent = false;
+
+            if (!stabilityHintSent &&
+                millis() > RUNTIME_STABILITY_WINDOW_MS &&
+                WiFi.status() == WL_CONNECTED)
+            {
+                SmartCore_System::runtimeStableConfirmed = true;
+                stabilityHintSent = true;
+
+                logMessage(LOG_INFO,
+                    "🟢 Runtime stability hint raised (network alive)");
+            }
+
             // ======================================================
             //  WIFI: Exponential Backoff Only
             // ======================================================

@@ -2,4 +2,4 @@
 #pragma once
 
 #define FW_VER        "v@0.0.5"
-#define FW_VER_FULL   "v0.0.5-dirty"
+#define FW_VER_FULL   "v0.0.5-1-gca99255-dirty"
