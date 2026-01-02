@@ -9,6 +9,7 @@
 
 namespace SmartCore_EEPROM
 {
+    extern bool resetComplete;
 
     void init(const SmartCoreSettings &settings);
 
@@ -47,6 +48,9 @@ namespace SmartCore_EEPROM
     String readLocationFromEEPROM();
 
     // --- EEPROM Flags ---
+
+    void writeResetCompleteFlag(bool flag);
+    bool readResetCompleteFlag();
 
     void writeResetConfigFlag(bool flag);
     bool readResetConfigFlag();
@@ -125,5 +129,7 @@ namespace SmartCore_EEPROM
 #define MQTT_LAST_PRIORITY_ADDR 363
 #define SMARTBOX_PRIORITY_ADDR 364
 
-#define EEPROM_RESERVED 365
+#define EEPROM_RESET_COMPLETE_FLAG 365
+
+#define EEPROM_RESERVED 366
 #define EEPROM_TOTAL_SIZE 400

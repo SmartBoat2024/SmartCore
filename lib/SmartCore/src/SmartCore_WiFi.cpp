@@ -197,7 +197,10 @@ namespace SmartCore_WiFi
         // STEP 1: FORCED PROVISIONING (Reset button held)
         if (resetConfig)
         {
-            SmartCore_EEPROM::resetParameters();
+            SmartCore_EEPROM::resetComplete = SmartCore_EEPROM::readResetCompleteFlag();
+            if(!SmartCore_EEPROM::resetComplete){
+                SmartCore_EEPROM::resetParameters(false);
+            }
             logMessage(LOG_INFO, "🔁 ResetConfig = true → Starting provisioning AP...");
 
             uint8_t mac[6];

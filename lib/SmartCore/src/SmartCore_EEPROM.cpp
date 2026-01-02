@@ -9,6 +9,7 @@
 
 namespace SmartCore_EEPROM
 {
+    bool resetComplete = false;
 
     static SmartCoreSettings _settings;
 
@@ -192,6 +193,16 @@ namespace SmartCore_EEPROM
     }
 
     // --- Flags & Modes ---
+    void writeResetCompleteFlag(bool flag)
+    {
+        writeBoolToEEPROM(EEPROM_RESET_COMPLETE_FLAG, flag);
+    }
+
+    bool readResetCompleteFlag()
+    {
+        return readBoolFromEEPROM(EEPROM_RESET_COMPLETE_FLAG);
+    }
+
 
     void writeFirstWiFiConnectFlag(bool flag)
     {
@@ -359,6 +370,7 @@ namespace SmartCore_EEPROM
         logMessage(LOG_ERROR, "❌ EEPROM commit failed (hard reset)");
     else
         logMessage(LOG_INFO, "✅ Hard reset committed");
+        SmartCore_EEPROM::writeResetCompleteFlag(true);
 }
 
 
