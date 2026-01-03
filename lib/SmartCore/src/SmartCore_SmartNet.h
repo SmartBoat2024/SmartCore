@@ -1,18 +1,18 @@
 #pragma once
 
-#include<arduino.h>
+#include <arduino.h>
 #include <stdint.h>
 
 // Address Ranges (0x00–0x7F = safe for your system)
-#define SMARTNET_ADDR_SMARTBOX         0x01  // Central SmartBox
-#define SMARTNET_ADDR_UI_MODULE        0x10  // Touchscreens, keypads
-#define SMARTNET_ADDR_RELAY_MODULE     0x20  // Relay modules
-#define SMARTNET_ADDR_SENSOR_MODULE    0x30  // Sensors
-#define SMARTNET_ADDR_SMARTWIRING      0x40  // Wiring hubs
-#define SMARTNET_ADDR_DEV_TEST         0x7E  // Dev/test
-#define SMARTNET_ADDR_UNASSIGNED       0x7F  // Not yet assigned
+#define SMARTNET_ADDR_SMARTBOX 0x01      // Central SmartBox
+#define SMARTNET_ADDR_UI_MODULE 0x10     // Touchscreens, keypads
+#define SMARTNET_ADDR_RELAY_MODULE 0x20  // Relay modules
+#define SMARTNET_ADDR_SENSOR_MODULE 0x30 // Sensors
+#define SMARTNET_ADDR_SMARTWIRING 0x40   // Wiring hubs
+#define SMARTNET_ADDR_DEV_TEST 0x7E      // Dev/test
+#define SMARTNET_ADDR_UNASSIGNED 0x7F    // Not yet assigned
 
-// SmartNet CAN TX/RX pins 
+// SmartNet CAN TX/RX pins
 #ifndef SMARTNET_CAN_TX
 #define SMARTNET_CAN_TX GPIO_NUM_11
 #endif
@@ -22,7 +22,8 @@
 
 #define SMARTBOAT_MANUFACTURER_ID 2025
 
-namespace SmartCore_SmartNet {
+namespace SmartCore_SmartNet
+{
 
     extern TaskHandle_t smartNetTaskHandle;
 
@@ -32,26 +33,27 @@ namespace SmartCore_SmartNet {
     uint8_t suggestedAddress();
 
     // Communication
-    bool sendMessage(uint32_t id, const uint8_t* data, uint8_t len);
-    void sendCANMessage(uint32_t id, const uint8_t* data, uint8_t len);
+    bool sendMessage(uint32_t id, const uint8_t *data, uint8_t len);
+    void sendCANMessage(uint32_t id, const uint8_t *data, uint8_t len);
 
     // Incoming
     void handleIncoming();
-    void parseMessage(uint32_t id, const uint8_t* data, uint8_t len);
-    void handlePGN(uint32_t pgn, const uint8_t* data, uint8_t len);
+    uint32_t extractPGN(uint32_t canId);
+    void parseMessage(uint32_t id, const uint8_t *data, uint8_t len);
+    void handlePGN(uint32_t pgn, const uint8_t *data, uint8_t len);
 
     // PGN handlers
-    void handleHeartbeat(const uint8_t* data, uint8_t len);
-    void handleProductInfo(const uint8_t* data, uint8_t len);
-    void handleModuleIdentity(const uint8_t* data, uint8_t len);
-    void handleSystemStatus(const uint8_t* data, uint8_t len);
-    void handleCustomMessage(const uint8_t* data, uint8_t len);
+    void handleHeartbeat(const uint8_t *data, uint8_t len);
+    void handleProductInfo(const uint8_t *data, uint8_t len);
+    void handleModuleIdentity(const uint8_t *data, uint8_t len);
+    void handleSystemStatus(const uint8_t *data, uint8_t len);
+    void handleCustomMessage(const uint8_t *data, uint8_t len);
 
     // Responses
     void sendHeartbeat();
     void sendModuleIdentity();
     void sendProductInfo();
-    void getFirmwareVersion(uint8_t& major, uint8_t& minor);
+    void getFirmwareVersion(uint8_t &major, uint8_t &minor);
 
     // SmartNet address negotiation
     bool testAddressConflict(uint8_t addressToTest);
@@ -61,6 +63,24 @@ namespace SmartCore_SmartNet {
     void waitForAssignment();
 
     // smartnet task
-    void smartNetTask(void* pvParameters);
+    void sniffBus();
+    void smartNetTask(void *pvParameters);
+    void dispatchPGN(uint32_t pgn, uint8_t src, const uint8_t *data, uint8_t len);
+    void publishField(
+        uint32_t pgn,
+        const char *pgnName,
+        uint8_t src,
+        const char *field,
+        float value,
+        const char *units);
+
+    // PGN Switch
+    void decodeEnvironmental(uint8_t src, const uint8_t *data, uint8_t len);
+    void decodeSpeed(uint8_t src, const uint8_t *data, uint8_t len);
+    void decodeHeave(uint8_t src, const uint8_t *data, uint8_t len);
+    void decodeRateOfTurn(uint8_t src, const uint8_t *data, uint8_t len);
+    void decodeRudder(uint8_t src, const uint8_t *data, uint8_t len);
+    void decodeAttitude(uint8_t src, const uint8_t *data, uint8_t len);
+    void decodeVesselHeading(uint8_t src, const uint8_t *data, uint8_t len);
 
 } // namespace

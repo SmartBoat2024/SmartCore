@@ -243,7 +243,8 @@ namespace SmartCore_WiFi
                     // ===== COMMON FIELDS =====
                     const char *ssid = doc["ssid"] | "";
                     const char *password = doc["password"] | "";
-                    const char *serial = doc["serialNumber"] | "";
+                    const char *serial = doc["serial"] | "";
+                    const char *boatId = doc["boatId"] | "";
                     int mqttPort = doc["mqttPort"] | 1883;
 
                     if (strlen(ssid) > 32 || strlen(password) > 64)
@@ -331,6 +332,7 @@ namespace SmartCore_WiFi
                             String(ssid),
                             String(password),
                             String(serial),
+                            String(boatId),
                             mqttStatic,
                             String(staticIp),
                             String(mask),
@@ -533,115 +535,189 @@ namespace SmartCore_WiFi
     //
     // ======================================================================================
 
-    void startNetworkServices(bool mqttRequired = true)
+void startNetworkServices(bool mqttRequired = true)
+{
+    logMessage(LOG_INFO, "🌐 Starting Network Services...");
+    waitForValidIP();
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    if (!mqttRequired)
     {
-        logMessage(LOG_INFO, "🌐 Starting Network Services...");
-        waitForValidIP();
-        vTaskDelay(pdMS_TO_TICKS(200));
+        Serial.println("🚫 MQTT skipped (not required)");
+        return;
+    }
 
-        if (!mqttRequired)
+    // -------------------------------------------------------------
+    // Sanity check: priority list must exist
+    // -------------------------------------------------------------
+    if (mqttPriorityCount == 0)
+    {
+        logMessage(LOG_WARN, "⚠️ MQTT not started: priority list empty");
+        return;
+    }
+
+    // -------------------------------------------------------------
+    // Load last used broker index
+    // -------------------------------------------------------------
+    uint8_t savedIndex =
+        SmartCore_EEPROM::readByteFromEEPROM(MQTT_LAST_PRIORITY_ADDR);
+
+    if (savedIndex >= mqttPriorityCount)
+        savedIndex = 0;
+
+    SmartCore_MQTT::currentPriorityIndex = savedIndex;
+
+    // -------------------------------------------------------------
+    // Try PRIORITY 0 first if we were previously using a backup
+    // -------------------------------------------------------------
+    const int TRY_PRIMARY_ON_BOOT = 3;
+
+    if (savedIndex != 0)
+    {
+        logMessage(
+            LOG_INFO,
+            "🔍 Previously using backup priority " + String(savedIndex) +
+            ". Testing priority 0..."
+        );
+
+        String primaryIP = mqttPriorityList[0];
+        uint16_t primaryPort = mqtt_port;
+
+        bool primaryConnected = false;
+
+        for (int attempt = 1; attempt <= TRY_PRIMARY_ON_BOOT; attempt++)
         {
-            Serial.println("🚫 MQTT skipped (not required)");
-            return;
-        }
+            SmartCore_MQTT::hardResetClient();
 
-        // -------------------------------------------------------------
-        // Load last used broker index
-        // -------------------------------------------------------------
-        uint8_t savedIndex =
-            SmartCore_EEPROM::readByteFromEEPROM(MQTT_LAST_PRIORITY_ADDR);
+            logMessage(
+                LOG_INFO,
+                "🧪 Testing PRIMARY broker attempt " + String(attempt) +
+                " → " + primaryIP + ":" + String(primaryPort)
+            );
 
-        if (savedIndex >= mqttPriorityCount)
-            savedIndex = 0;
+            SmartCore_MQTT::setupMQTTClient(primaryIP, primaryPort);
 
-        SmartCore_MQTT::currentPriorityIndex = savedIndex;
-
-        // -------------------------------------------------------------
-        // Try PRIORITY 0 first if we were previously using a backup
-        // -------------------------------------------------------------
-        const int TRY_PRIMARY_ON_BOOT = 3;
-
-        if (savedIndex != 0)
-        {
-            logMessage(LOG_INFO,
-                       "🔍 Previously using backup priority " + String(savedIndex) +
-                           ". Testing priority 0...");
-
-            String primaryIP = mqttPriorityList[0];
-            uint16_t primaryPort = mqtt_port;
-
-            bool primaryConnected = false;
-
-            for (int attempt = 1; attempt <= TRY_PRIMARY_ON_BOOT; attempt++)
+            // ---------------------------------------------------------
+            // Wait up to ~2 seconds for connection (poll, not blind)
+            // ---------------------------------------------------------
+            for (int wait = 0; wait < 20; wait++)
             {
-                SmartCore_MQTT::hardResetClient();
-
-                logMessage(LOG_INFO,
-                           "🧪 Testing PRIMARY broker attempt " + String(attempt) +
-                               " → " + primaryIP + ":" + String(primaryPort));
-
-                SmartCore_MQTT::setupMQTTClient(primaryIP, primaryPort);
-
-                vTaskDelay(pdMS_TO_TICKS(2000)); // allow connection attempt
-
                 if (mqttIsConnected)
                 {
-                    logMessage(LOG_INFO,
-                               "🎉 PRIMARY is back online! Using priority 0.");
-                    SmartCore_MQTT::currentPriorityIndex = 0;
-
-                    // Persist the change immediately
-                    SmartCore_EEPROM::writeByteToEEPROM(
-                        MQTT_LAST_PRIORITY_ADDR, 0);
-                    EEPROM.commit();
-
                     primaryConnected = true;
                     break;
                 }
+                vTaskDelay(pdMS_TO_TICKS(100));
             }
 
-            if (!primaryConnected)
+            if (primaryConnected)
             {
-                logMessage(LOG_WARN,
-                           "⚠️ PRIMARY still offline → using backup priority " +
-                               String(savedIndex));
+                logMessage(
+                    LOG_INFO,
+                    "🎉 PRIMARY is back online! Using priority 0."
+                );
 
-                SmartCore_MQTT::setupMQTTClient(
-                    mqttPriorityList[savedIndex], mqtt_port);
+                SmartCore_MQTT::currentPriorityIndex = 0;
+
+                // Persist the change immediately
+                SmartCore_EEPROM::writeByteToEEPROM(
+                    MQTT_LAST_PRIORITY_ADDR, 0
+                );
+                EEPROM.commit();
+
+                break;
             }
+        }
+
+        if (!primaryConnected)
+        {
+            logMessage(
+                LOG_WARN,
+                "⚠️ PRIMARY still offline → using backup priority " +
+                String(savedIndex)
+            );
+
+            SmartCore_MQTT::setupMQTTClient(
+                mqttPriorityList[savedIndex],
+                mqtt_port
+            );
+        }
+    }
+    else
+    {
+        // -------------------------------------------------------------
+        // Normal boot using priority 0
+        // -------------------------------------------------------------
+        String ip = mqttPriorityList[0];
+
+        if (ip.length() == 0 || ip == "0.0.0.0" || ip == "127.0.0.1")
+        {
+            Serial.println("⚠️ MQTT not started: No valid broker IP found");
+            return;
+        }
+
+        logMessage(
+            LOG_INFO,
+            "🚀 Starting MQTT using primary → " + ip
+        );
+
+        SmartCore_MQTT::setupMQTTClient(ip, mqtt_port);
+    }
+
+    // -------------------------------------------------------------
+    // Start WiFi/MQTT health monitor
+    // -------------------------------------------------------------
+    if (wifiMqttCheckTaskHandle == nullptr)
+    {
+        xTaskCreatePinnedToCore(
+            SmartCore_LED::wifiMqttCheckTask,
+            "WiFi/MQTT Check",
+            4096,
+            nullptr,
+            1,
+            &wifiMqttCheckTaskHandle,
+            0
+        );
+    }
+
+    // -------------------------------------------------------------
+    // App-level tasks & upgrade check
+    // -------------------------------------------------------------
+    SmartCore_System::createAppTasks();
+    SmartCore_MQTT::checkForUpgrade(false);
+
+    // -------------------------------------------------------------
+    // SmartNet (SmartBox only)
+    // -------------------------------------------------------------
+#ifdef SMARTBOX_BUILD
+
+    if (SmartCore_SmartNet::smartNetTaskHandle == nullptr)
+    {
+        if (SmartCore_SmartNet::initSmartNet())
+        {
+            xTaskCreatePinnedToCore(
+                SmartCore_SmartNet::smartNetTask,
+                "SmartNet_RX_Task",
+                4096,
+                nullptr,
+                1,
+                &SmartCore_SmartNet::smartNetTaskHandle,
+                1
+            );
         }
         else
         {
-            // -------------------------------------------------------------
-            // Normal boot using priority 0
-            // -------------------------------------------------------------
-            String ip = mqttPriorityList[0];
-            if (ip.length() == 0 || ip == "0.0.0.0" || ip == "127.0.0.1" || mqttPriorityCount == 0)
-            {
-                Serial.println("⚠️ MQTT not started: No valid broker IP found");
-                return;
-            }
-            logMessage(LOG_INFO, "🚀 Starting MQTT using primary → " + ip);
-            SmartCore_MQTT::setupMQTTClient(ip, mqtt_port);
+            Serial.println("❌ SmartNet init failed — task not started");
         }
-
-        // -------------------------------------------------------------
-        // Start WiFi/MQTT health monitor
-        // -------------------------------------------------------------
-        if (wifiMqttCheckTaskHandle == nullptr)
-        {
-            xTaskCreatePinnedToCore(
-                SmartCore_LED::wifiMqttCheckTask,
-                "WiFi/MQTT Check",
-                4096, NULL, 1,
-                &wifiMqttCheckTaskHandle,
-                0);
-        }
-
-        SmartCore_System::createAppTasks();
-
-        SmartCore_MQTT::checkForUpgrade(false);
     }
+    else
+    {
+        Serial.println("ℹ️ SmartNet already running — task not restarted");
+    }
+
+#endif // SMARTBOX_BUILD
+}
+
 
     void waitForValidIP()
     {

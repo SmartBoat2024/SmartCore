@@ -68,6 +68,7 @@ extern "C" void SmartBox_notifyProvisionReceived(
     const String &ssid,
     const String &password,
     const String &serial,
+    const String &boatId,
     bool mqttStatic,
     const String &staticIp,
     const String &subnetMask,
